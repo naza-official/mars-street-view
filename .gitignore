@@ -10,3 +10,4 @@ raw/
 *.egg-info/
 .snakemake/
 node_modules/
+logs/

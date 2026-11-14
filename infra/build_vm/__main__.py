@@ -58,9 +58,14 @@ def launch_template(job: Job, sg: aws.ec2.SecurityGroup) -> aws.ec2.LaunchTempla
     )
 
 
-def fleet(job: Job, template: aws.ec2.LaunchTemplate, subnet_ids: list[str]) -> aws.ec2.Fleet:
-    overrides = [{"instance_type": kind, "subnet_id": subnet, "priority": float(rank)}
-                 for rank, kind in enumerate(job.instance_types) for subnet in subnet_ids]
+def fleet_overrides(instance_types: tuple[str, ...], subnet_ids: list[str]) -> list[dict]:
+    return [{"instance_type": kind, "subnet_id": subnet, "priority": float(rank)}
+            for rank, kind in enumerate(instance_types) for subnet in subnet_ids]
+
+
+def fleet(job: Job, template: aws.ec2.LaunchTemplate,
+          subnet_ids: pulumi.Output[list[str]]) -> aws.ec2.Fleet:
+    overrides = subnet_ids.apply(lambda ids: fleet_overrides(job.instance_types, ids))
     return aws.ec2.Fleet(
         "fleet", type="instant", terminate_instances=True,
         terminate_instances_with_expiration=True,
