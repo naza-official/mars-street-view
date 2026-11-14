@@ -6,7 +6,7 @@
     {
       "id": "M0",
       "title": "Repo bootstrap",
-      "status": "todo",
+      "status": "in_progress",
       "depends_on": [],
       "human_gate": "PR review",
       "acceptance": [
