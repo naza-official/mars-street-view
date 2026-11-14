@@ -68,7 +68,6 @@ def fleet(job: Job, template: aws.ec2.LaunchTemplate,
     overrides = subnet_ids.apply(lambda ids: fleet_overrides(job.instance_types, ids))
     return aws.ec2.Fleet(
         "fleet", type="instant", terminate_instances=True,
-        terminate_instances_with_expiration=True,
         launch_template_configs=[{
             "launch_template_specification": {"launch_template_id": template.id,
                                               "version": template.latest_version.apply(str)},
@@ -76,8 +75,7 @@ def fleet(job: Job, template: aws.ec2.LaunchTemplate,
         }],
         target_capacity_specification={"default_target_capacity_type": "spot",
                                        "total_target_capacity": 1},
-        spot_options={"allocation_strategy": "capacity-optimized-prioritized",
-                      "instance_interruption_behavior": "terminate"},
+        spot_options={"allocation_strategy": "capacity-optimized-prioritized"},
         opts=opts,
     )
 
