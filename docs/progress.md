@@ -28,6 +28,15 @@ Newest session first. Each entry: date, milestone, what changed, evidence (comma
 - The smoke target is not in image v0.2.0, so it needs **v0.3.0** built from this branch (tag push; human approval).
 - The agent's permission policy blocked every command touching `scripts/run_job.sh` (chmod, `bash -n`), so the script is committed **without the executable bit and not syntax-checked by the agent**. `logs/` is not yet in `.gitignore`.
 
+**Later the same session:**
+- IAM moved to `infra/iam` (human-applied, 9 resources up). CloudFront made optional (`cdn`, default off): `CreateDistribution` returns "Your account must be verified" (AWS Support case needed, RequestID 0a88e3c6-221c-4e7f-baec-164347198b32). Storage stack up (11 resources + bucket policy). Probe: a plain PutObject to `orbital/_policytest/global/v1/` is denied and `work/` is allowed.
+- `run_job.sh` fixes: Pulumi on `/dev/tty` (`tee` made it non-interactive); stale locks from killed runs removed by hand.
+- **EC2 Fleet `instant` failed twice at CreateFleet (stopped per the two-failure rule):**
+  1. `InvalidParameter: TerminateInstancesWithExpiration is not supported for given fleet type` → removed.
+  2. `InvalidParameterCombination: The minimum target capacity is only available with single instance fleets or single AZ fleets` (RequestID baa7eef2-171c-4928-9ed3-d5f669beb435). The provider seems to send `MinTargetCapacity` with a multi-type, multi-AZ override list.
+  Both times the SG and launch template were created and then destroyed; no instance launched; 0 instances and 0 volumes left.
+- Options: (a) keep the Fleet and set `spot_options.single_availability_zone=true` (the Fleet still picks the AZ and the type); (b) replace it with a plain `aws.ec2.Instance` with Spot market options, one type per `up`, with `run_job.sh` retrying the next type on a capacity error. Human chose (a) single AZ.
+
 **Next step (human-gated):** (1) `cd infra/storage && pulumi up`; (2) push tag `v0.3.0` → image workflow; (3) `cd infra/build_vm && pulumi preview`; (4) in a terminal: `MSV_INSTANCE_TYPES=m7i.xlarge,m6i.xlarge,m5.xlarge MSV_VOLUME_GB=50 bash scripts/run_job.sh smoke global`; (5) then run the acceptance checks, log to `docs/runs.md`, open the PR.
 
 ### 2026-11-14 — M2 follow-up: M2 done, D-004 decided

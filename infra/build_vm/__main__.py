@@ -75,7 +75,8 @@ def fleet(job: Job, template: aws.ec2.LaunchTemplate,
         }],
         target_capacity_specification={"default_target_capacity_type": "spot",
                                        "total_target_capacity": 1},
-        spot_options={"allocation_strategy": "capacity-optimized-prioritized"},
+        spot_options={"allocation_strategy": "capacity-optimized-prioritized",
+                      "single_availability_zone": True},
         opts=opts,
     )
 
