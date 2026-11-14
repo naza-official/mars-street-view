@@ -1,0 +1,127 @@
+{
+  "schema": "1.0",
+  "status_values": ["todo", "in_progress", "review", "done", "blocked"],
+  "rule": "Agent may set todo, in_progress, review, blocked. Only the human sets done.",
+  "milestones": [
+    {
+      "id": "M0",
+      "title": "Repo bootstrap",
+      "status": "todo",
+      "depends_on": [],
+      "human_gate": "PR review",
+      "acceptance": [
+        "ruff check .",
+        "pytest -q",
+        "test -f configs/sites/jezero.yaml",
+        "gh run list --limit 1 shows CI success on the PR"
+      ]
+    },
+    {
+      "id": "M1",
+      "title": "L0 common library + terrain-tiler spike",
+      "status": "todo",
+      "depends_on": ["M0"],
+      "human_gate": "PR review by A and B; decision D-002",
+      "acceptance": [
+        "pytest -q tests/common",
+        "python -m common.validate tests/fixtures/mdim_jezero.tif",
+        "python -m common.validate tests/fixtures/mola_jezero.tif",
+        "python -m common.layerjson --check tests/fixtures/layer_example.json",
+        "test -f docs/decisions/D-002-terrain-tiler.md"
+      ]
+    },
+    {
+      "id": "M2",
+      "title": "Container image on GHCR",
+      "status": "todo",
+      "depends_on": ["M1"],
+      "human_gate": "PR review",
+      "acceptance": [
+        "docker run --rm ghcr.io/naza-official/mars-sv:<tag> python -m common.validate --help",
+        "docker run --rm ghcr.io/naza-official/mars-sv:<tag> pc_align --help",
+        "docker run --rm ghcr.io/naza-official/mars-sv:<tag> snakemake --version",
+        "image size recorded in docs/progress.md"
+      ]
+    },
+    {
+      "id": "M3",
+      "title": "Pulumi storage + build_vm stacks, smoke run",
+      "status": "todo",
+      "depends_on": ["M2"],
+      "human_gate": "Cloudflare token; approve first pulumi up and destroy per stack",
+      "acceptance": [
+        "cd infra/storage && pulumi preview",
+        "cd infra/build_vm && pulumi preview",
+        "scripts/run_job.sh smoke global completes",
+        "python -m common.validate r2://mars-sv/orbital/_smoke/global/v1/",
+        "aws ec2 describe-instances --filters Name=tag:project,Values=mars-sv Name=instance-state-name,Values=running --query 'length(Reservations)' returns 0",
+        "aws ec2 describe-volumes --filters Name=tag:project,Values=mars-sv --query 'length(Volumes)' returns 0",
+        "docs/runs.md has the smoke run"
+      ]
+    },
+    {
+      "id": "M4",
+      "title": "L1 global base",
+      "status": "todo",
+      "depends_on": ["M3"],
+      "human_gate": "Approve build run",
+      "acceptance": [
+        "python -m common.validate r2://mars-sv/orbital/l1_global/global/v1/",
+        "catalog/index.json lists l1_global/global v1",
+        "measured MDIM shift at Jezero under 232 m, recorded in layer.json notes",
+        "no running instances or volumes tagged project=mars-sv"
+      ]
+    },
+    {
+      "id": "M5",
+      "title": "Viewer skeleton",
+      "status": "todo",
+      "depends_on": ["M4"],
+      "human_gate": "Human opens the deployed URL",
+      "acceptance": [
+        "cd viewer && npm run build",
+        "cd viewer && npm test",
+        "deployed URL loads L1 and the Jezero button flies to 18.4N 77.5E (screenshot in docs/progress.md)"
+      ]
+    },
+    {
+      "id": "M6",
+      "title": "L2 Jezero terrain (handoff to Person B)",
+      "status": "todo",
+      "depends_on": ["M4"],
+      "human_gate": "Approve build run; confirm seam visually",
+      "acceptance": [
+        "python -m common.validate r2://mars-sv/orbital/l2_regional/jezero/v1/",
+        "alignment_report.json present with RMS per pc_align step",
+        "catalog/index.json lists l2_regional/jezero v1",
+        "GitHub issue opened for Person B with paths",
+        "no running instances or volumes tagged project=mars-sv"
+      ]
+    },
+    {
+      "id": "M7",
+      "title": "Integration gate with Person B pilot stop",
+      "status": "todo",
+      "depends_on": ["M5", "M6"],
+      "human_gate": "Human and Person B confirm alignment",
+      "acceptance": [
+        "cd viewer && npm test",
+        "viewer loads rover/l3_poses/jezero stops and opens one panorama",
+        "stops above alignment threshold are hidden",
+        "screenshot of aligned stop in docs/progress.md"
+      ]
+    },
+    {
+      "id": "M8",
+      "title": "L5 thermal",
+      "status": "todo",
+      "depends_on": ["M5"],
+      "human_gate": "Licence check; approve build run",
+      "acceptance": [
+        "python -m common.validate r2://mars-sv/orbital/l5_thermal/jezero/v1/",
+        "licence recorded in layer.json sources",
+        "viewer overlay toggle and hover value work (screenshot)"
+      ]
+    }
+  ]
+}
