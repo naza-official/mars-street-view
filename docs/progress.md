@@ -8,10 +8,22 @@ Newest session first. Each entry: date, milestone, what changed, evidence (comma
 | D-001 | CRS code written in layer.json (proposed IAU_2015:49900) | open, issue #2, `docs/decisions/D-001-crs-code.md`, rec: keep 49900 as body+datum code |
 | D-002 | Terrain tiler for a Mars sphere | open, issue #5, `docs/decisions/D-002-terrain-tiler.md`, rec: A (own mesher → 3D Tiles 1.1 GLB) |
 | D-003 | One R2 bucket with prefixes vs two buckets | **decided 2026-11-14 by human: no R2; one AWS S3 bucket `mars-sv-123412369922` (us-west-2)**, issue #3 |
-| D-004 | How the build VM pulls the private GHCR image | open, issue #12, `docs/decisions/D-004-image-pull.md`, rec: make package public |
+| D-004 | How the build VM pulls the GHCR image | **decided 2026-11-14 by human: make package public** (pending UI change), issue #12 |
 | D-005 | ISIS in the build image | **decided 2026-11-14 by human: optional, `WITH_ISIS=0` default**, `docs/decisions/D-005-isis-optional.md` |
 
 ## Sessions
+### 2026-11-14 — M2 follow-up: M2 done, D-004 decided
+
+- PR #10 merged by human; human set **M2 `done`**.
+- D-004 decided: make `ghcr.io/naza-official/mars-sv` public. It can only be changed in the GitHub UI (no API). At the time of this commit an anonymous pull is still refused:
+```
+$ curl (anonymous token) https://ghcr.io/v2/naza-official/mars-sv/manifests/v0.2.0
+anonymous manifest v0.2.0 HTTP 404
+```
+- Follow-up PR merged on the human's instruction without waiting for checks.
+
+Next step: confirm the package is public (anonymous manifest request returns 200), then M3 (Pulumi storage + build_vm, smoke run) with image `v0.2.0`.
+
 ### 2026-11-14 — M2 Container image on GHCR (status: review, PR #10)
 
 Branch `m2-container-image`. Image `ghcr.io/naza-official/mars-sv:v0.1.0` (= `sha-e65d8ed` = `latest`), digest `sha256:11ef1e286fac9ab274aa9ea1116d812592b6e9abc7a7d41ac96373c6176d2def`. Decision issue #12 (D-004).
