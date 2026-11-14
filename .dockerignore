@@ -1,0 +1,7 @@
+*
+!pyproject.toml
+!common/
+!pipelines/
+!configs/
+!docker/
+**/__pycache__

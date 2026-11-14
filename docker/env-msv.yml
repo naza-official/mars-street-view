@@ -1,0 +1,19 @@
+name: msv
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - gdal=3.10
+  - rasterio=1.4
+  - pyproj=3.7
+  - numpy=2.2
+  - scipy
+  - pystac
+  - pystac-client
+  - boto3
+  - jsonschema
+  - pyyaml
+  - pytest
+  - pip
+  - pip:
+      - snakemake==9.27.1
