@@ -1,0 +1,5 @@
+configfile: "configs/sites/jezero.yaml"
+
+
+rule all:
+    input: []
