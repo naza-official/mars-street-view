@@ -8,3 +8,4 @@ raw/
 .ruff_cache/
 .claude/settings.local.json
 *.egg-info/
+.snakemake/
