@@ -22,7 +22,7 @@ LEAF_LEVEL = 7
 SEGMENTS = 180
 SPLIT_LEVEL = 4
 DELATIN_FROM_LEVEL = 4
-LEAF_MAX_ERROR_M = 2.0
+LEAF_MAX_ERROR_M = 10.0
 TEXTURE_PX = 360
 JPEG_QUALITY = 85
 GLOBAL = TileGrid(Extent(0.0, -90.0, 360.0, 90.0), rows0=1, cols0=2)
@@ -59,13 +59,17 @@ def block_mean(pixels: np.ndarray, factor: int) -> np.ndarray:
 
 
 def corner_grid(pixels: np.ndarray, wrap_lon: bool, poles: bool) -> np.ndarray:
-    padded = np.pad(pixels, ((1, 1), (0, 0)), mode="edge")
-    padded = np.pad(padded, ((0, 0), (1, 1)), mode="wrap" if wrap_lon else "edge")
-    corners = (padded[:-1, :-1] + padded[1:, :-1] + padded[:-1, 1:] + padded[1:, 1:]) / 4
+    padded = np.pad(np.pad(pixels, ((1, 1), (0, 0)), mode="edge"), ((0, 0), (1, 1)),
+                    mode="wrap" if wrap_lon else "edge")
+    corners = padded[:-1, :-1].astype(np.float32)
+    corners += padded[1:, :-1]
+    corners += padded[:-1, 1:]
+    corners += padded[1:, 1:]
+    corners *= 0.25
     if poles:
         corners[0] = pixels[0].mean(dtype=np.float64)
         corners[-1] = pixels[-1].mean(dtype=np.float64)
-    return corners.astype(np.float32)
+    return corners
 
 
 def build_corners(pixels: np.ndarray, levels: range, is_global: bool) -> dict[int, np.ndarray]:
@@ -297,7 +301,7 @@ def build(dtm: Path, out: Path, ortho: Path | None, root: TileKey | None, worker
     for uri, doc in externals.items():
         write_json(out / uri, doc)
     write_json(out / "tileset.json", tileset)
-    stats = summary(records, geometric, time.time() - start)
+    stats = {**summary(records, geometric, time.time() - start), "leaf_error_m": leaf_error_m}
     (out.parent / f"{out.name}.stats.json").write_text(json.dumps(stats, indent=1) + "\n")
     return stats
 

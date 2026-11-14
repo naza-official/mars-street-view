@@ -7,6 +7,8 @@ configfile: str(REPO / "configs" / "sites" / "jezero.yaml")
 BUCKET = config.get("bucket", "mars-sv-123412369922")
 SMOKE_DEST = f"s3://{BUCKET}/orbital/_smoke/global/v1/"
 
+include: str(REPO / "layers" / "l1_global" / "rules.smk")
+
 
 rule all:
     input: []

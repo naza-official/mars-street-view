@@ -8,9 +8,9 @@ import numpy as np
 import rasterio
 from pyproj import CRS, Transformer
 from rasterio.enums import Resampling
-from rasterio.windows import from_bounds
+from rasterio.windows import Window, from_bounds
 
-from common.crs import geographic
+from common.crs import METRES_PER_DEGREE, geographic
 
 AZIMUTHS_DEG = tuple(range(0, 360, 45))
 SUN_ELEVATION_DEG = 30.0
@@ -24,7 +24,7 @@ class Shift:
     north_m: float
     magnitude_m: float
     score: float
-    azimuth_deg: float
+    azimuth_deg: float | None
     pixel_m: float
     centre_lonlat: tuple[float, float]
 
@@ -101,14 +101,55 @@ def measure(dtm: Path, ortho: Path, lon: float, lat: float, size_px: int = WINDO
                  round(score, 3), float(az), round(pixel, 3), (lon, lat))
 
 
+def source_window(lon: float, lat: float, ppd: int, size_px: int) -> Window:
+    col = round((np.mod(lon + 180.0, 360.0)) * ppd - size_px / 2)
+    row = round((90.0 - lat) * ppd - size_px / 2)
+    return Window(col, row, size_px, size_px)
+
+
+def read_gray(path: Path, window: Window) -> np.ndarray:
+    with rasterio.open(path) as ds:
+        return ds.read(window=window, out_dtype="float64").mean(axis=0)
+
+
+def conversion_shift(source: Path, product: Path, ppd: int, lon: float, lat: float,
+                     size_px: int = 256, max_shift: int = 8) -> Shift:
+    window = source_window(lon, lat, ppd, size_px + 2 * max_shift)
+    before = read_gray(source, window)
+    with rasterio.open(product) as ds:
+        lon_west = np.mod(window.col_off / ppd - 180.0, 360.0)
+        x0 = (lon_west - 180.0) * METRES_PER_DEGREE
+        y0 = (90.0 - window.row_off / ppd) * METRES_PER_DEGREE
+        pixel = abs(ds.res[0])
+        bounds = (x0, y0 - window.height * pixel, x0 + window.width * pixel, y0)
+        after = ds.read(window=from_bounds(*bounds, ds.transform),
+                        out_shape=(ds.count, window.height, window.width),
+                        out_dtype="float64").mean(axis=0)
+    dy, dx, score = peak(ncc_surface(before, after, max_shift))
+    east, north = dx * pixel, -dy * pixel
+    return Shift(round(east, 1), round(north, 1), round(float(np.hypot(east, north)), 1),
+                 round(score, 3), None, round(pixel, 3), (lon, lat))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m layers.l1_global.shift")
-    parser.add_argument("dtm", type=Path)
-    parser.add_argument("ortho", type=Path)
-    parser.add_argument("--lonlat", type=float, nargs=2, default=(77.5, 18.4))
-    parser.add_argument("--out", type=Path)
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    reg = sub.add_parser("registration", help="ortho features vs DTM hillshade")
+    reg.add_argument("dtm", type=Path)
+    reg.add_argument("ortho", type=Path)
+    conv = sub.add_parser("conversion", help="source image vs converted product")
+    conv.add_argument("source", type=Path)
+    conv.add_argument("product", type=Path)
+    conv.add_argument("--ppd", type=int, required=True)
+    for p in (reg, conv):
+        p.add_argument("--lonlat", type=float, nargs=2, default=(77.5, 18.4))
+        p.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
-    result = json.dumps(asdict(measure(args.dtm, args.ortho, *args.lonlat)), indent=2)
+    if args.cmd == "registration":
+        found = measure(args.dtm, args.ortho, *args.lonlat)
+    else:
+        found = conversion_shift(args.source, args.product, args.ppd, *args.lonlat)
+    result = json.dumps(asdict(found), indent=2)
     if args.out:
         args.out.write_text(result + "\n")
     print(result)

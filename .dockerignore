@@ -2,6 +2,7 @@
 !pyproject.toml
 !common/
 !pipelines/
+!layers/
 !configs/
 !docker/
 **/__pycache__

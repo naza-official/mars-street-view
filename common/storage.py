@@ -1,5 +1,6 @@
 import hashlib
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -7,11 +8,13 @@ from typing import Any
 from urllib.parse import urlparse
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 DEFAULT_BUCKET = "mars-sv-123412369922"
 REGION = "us-west-2"
 SCHEME = "s3"
+PUBLISH_WORKERS = 16
 
 
 @dataclass(frozen=True)
@@ -45,7 +48,8 @@ def parse_uri(uri: str) -> ObjectUri:
 
 @cache
 def client() -> Any:
-    return boto3.client("s3", region_name=REGION)
+    return boto3.client("s3", region_name=REGION,
+                        config=Config(max_pool_connections=2 * PUBLISH_WORKERS))
 
 
 def gdal_env() -> dict[str, str]:
@@ -135,10 +139,12 @@ def check_published_prefix(dest: ObjectUri) -> None:
         raise ValueError(f"not a published layer prefix (<lane>/<layer>/<site>/vN/): {dest.uri}")
 
 
-def publish_dir(root: Path, dest: ObjectUri) -> list[tuple[ObjectUri, bool]]:
+def publish_dir(root: Path, dest: ObjectUri,
+                workers: int = PUBLISH_WORKERS) -> list[tuple[ObjectUri, bool]]:
     check_published_prefix(dest)
-    results = []
-    for path in publish_order(root):
-        uri = dest.child(path.relative_to(root).as_posix())
-        results.append((uri, put_new(path, uri)))
-    return results
+    *assets, manifest = publish_order(root)
+    uris = [dest.child(p.relative_to(root).as_posix()) for p in assets]
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        uploaded = list(pool.map(put_new, assets, uris))
+    manifest_uri = dest.child(manifest.relative_to(root).as_posix())
+    return [*zip(uris, uploaded, strict=True), (manifest_uri, put_new(manifest, manifest_uri))]
