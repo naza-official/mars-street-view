@@ -194,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
     d.add_argument("out", type=Path)
     d.add_argument("--work", type=Path, required=True)
     d.add_argument("--fetched", required=True)
+    d.add_argument("--check-out", type=Path, required=True)
     o = sub.add_parser("ortho")
     o.add_argument("mdim", type=Path)
     o.add_argument("out", type=Path)
@@ -205,7 +206,9 @@ def main(argv: list[str] | None = None) -> int:
         out = fetch_areoid(args.out) if areoid else fetch(SOURCES[args.source], args.out)
         print(f"fetched {out}")
     elif args.cmd == "dtm":
-        print(json.dumps(make_dtm(args.mola, args.areoid, args.work, args.out, args.fetched)))
+        check = make_dtm(args.mola, args.areoid, args.work, args.out, args.fetched)
+        args.check_out.write_text(json.dumps(check) + "\n")
+        print(json.dumps(check))
     else:
         print(f"wrote {make_ortho(args.mdim, args.work, args.out, args.fetched)}")
     return 0

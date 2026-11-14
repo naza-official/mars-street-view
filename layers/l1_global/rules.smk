@@ -22,9 +22,9 @@ rule l1_dtm:
     output: dtm="l1/layer/dtm.tif", check="l1/dem_geoid_check.json"
     threads: workflow.cores
     shell:
-        "python -m layers.l1_global.ingest dtm {input.mola} {input.areoid} {output.dtm}"
-        " --work raw/tmp_dtm --fetched $(cat {input.fetched}) > {output.check}.tmp"
-        " && mv {output.check}.tmp {output.check}"
+        "mkdir -p l1/layer && touch l1/layer/.nosync"
+        " && python -m layers.l1_global.ingest dtm {input.mola} {input.areoid} {output.dtm}"
+        " --work raw/tmp_dtm --fetched $(cat {input.fetched}) --check-out {output.check}"
 
 
 rule l1_ortho:
@@ -55,7 +55,8 @@ rule l1_tiles:
     output: tileset="l1/layer/tileset.json", stats="l1/layer.stats.json"
     threads: workflow.cores
     shell:
-        "python -m layers.l1_global.tiles {input.dtm} l1/layer --ortho {input.ortho}"
+        "touch l1/layer/.nosync && python -m layers.l1_global.tiles {input.dtm} l1/layer"
+        " --ortho {input.ortho}"
         " --workers {threads}"
 
 

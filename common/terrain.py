@@ -31,7 +31,7 @@ class Extent:
         return max(self.east - self.west, self.north - self.south)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class TileKey:
     level: int
     row: int

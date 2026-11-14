@@ -96,3 +96,13 @@ def test_block_mean_halves() -> None:
 
 def test_global_key_count() -> None:
     assert len(tiles.tile_keys(tiles.GLOBAL, None)) == 2 * (4 ** 8 - 1) // 3
+
+
+def test_assemble_with_two_global_roots() -> None:
+    keys = [TileKey(0, 0, 1), TileKey(0, 0, 0)]
+    records = {k: {"origin": [float(k.col), 0.0, 0.0], "box": [0.0] * 12, "quant_m": 0.5}
+               for k in keys}
+    tileset, externals = tiles.assemble(records, {k: 100.0 for k in keys})
+    uris = [c["content"]["uri"] for c in tileset["root"]["children"]]
+    assert uris == ["tiles/0/0/0.glb", "tiles/0/0/1.glb"]
+    assert externals == {}
