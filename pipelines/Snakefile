@@ -4,6 +4,21 @@ REPO = Path(workflow.basedir).parent
 
 configfile: str(REPO / "configs" / "sites" / "jezero.yaml")
 
+BUCKET = config.get("bucket", "mars-sv-123412369922")
+SMOKE_DEST = f"s3://{BUCKET}/orbital/_smoke/global/v1/"
+
 
 rule all:
     input: []
+
+
+rule smoke_build:
+    output: directory("smoke/layer")
+    shell: "python -m pipelines.smoke {output}"
+
+
+rule smoke:
+    input: "smoke/layer"
+    output: "smoke/published.txt"
+    params: dest=SMOKE_DEST
+    shell: "python -m common.publish {input} {params.dest} > {output}.tmp && mv {output}.tmp {output}"

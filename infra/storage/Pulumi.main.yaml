@@ -1,0 +1,6 @@
+secretsprovider: awskms://alias/pulumi?region=us-west-2&awssdk=v2&profile=claude-agent
+encryptedkey: AQICAHgtT1U6EQNsaSMEAidbFmOb+Ru0J38jvNuT8/x0AgTmGwHAbxnbZs5BwD+/UEAYF/e8AAAAfjB8BgkqhkiG9w0BBwagbzBtAgEAMGgGCSqGSIb3DQEHATAeBglghkgBZQMEAS4wEQQMAT1r3+8REHEwXkYgAgEQgDsgpz2hOtrmXYMLcgU5OnFiax3tN30w8PgNKAE8BPq16wNqED6SNxAhKm1CNq7x3oTnGGl+lOyArN0CIw==
+config:
+  msv-storage:aws_profile: claude-agent
+  msv-storage:viewer_origins:
+    - http://localhost:5173

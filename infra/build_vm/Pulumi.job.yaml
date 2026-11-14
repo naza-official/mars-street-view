@@ -1,0 +1,4 @@
+secretsprovider: awskms://alias/pulumi?region=us-west-2&awssdk=v2&profile=claude-agent
+encryptedkey: AQICAHgtT1U6EQNsaSMEAidbFmOb+Ru0J38jvNuT8/x0AgTmGwGvaP3YYI0RkbuRVF+a+gN5AAAAfjB8BgkqhkiG9w0BBwagbzBtAgEAMGgGCSqGSIb3DQEHATAeBglghkgBZQMEAS4wEQQMO7Yg+8tFNCMusPQzAgEQgDvHgwfSNNrgPXKFnpE5tqQhhnW5qNhzsYOb7ZUYQ3IaKONuwrk7on+IUU26EGk6IdmbJ4v7G8bnKDs32w==
+config:
+  msv-build-vm:aws_profile: claude-agent

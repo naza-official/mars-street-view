@@ -44,3 +44,8 @@ def test_list_keys_uses_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
     keys = storage.list_keys(storage.parse_uri("s3://b/orbital/x/v1"))
     assert calls == {"bucket": "b", "prefix": "orbital/x/v1/"}
     assert keys == ["orbital/x/v1/layer.json"]
+
+
+def test_rasterio_session_uses_boto3_region() -> None:
+    session = storage.rasterio_session()
+    assert session._session.region_name == "us-west-2"

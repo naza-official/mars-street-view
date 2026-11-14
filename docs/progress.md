@@ -10,8 +10,70 @@ Newest session first. Each entry: date, milestone, what changed, evidence (comma
 | D-003 | One R2 bucket with prefixes vs two buckets | **decided 2026-11-14 by human: no R2; one AWS S3 bucket `mars-sv-123412369922` (us-west-2)**, issue #3 |
 | D-004 | How the build VM pulls the GHCR image | **decided 2026-11-14 by human: package public, verified anonymous pull**, issue #12 |
 | D-005 | ISIS in the build image | **decided 2026-11-14 by human: optional, `WITH_ISIS=0` default**, `docs/decisions/D-005-isis-optional.md` |
+| D-006 | EC2 vCPU quota (5) vs 16-vCPU build VM | open, issue #16, `docs/decisions/D-006-ec2-vcpu-quota.md`, rec: request Spot standard quota 32 |
+| D-007 | Public read for the viewer (CloudFront needs account verification) | open, issue #17, `docs/decisions/D-007-public-read.md`, rec: AWS Support case, then `cdn=true` |
 
 ## Sessions
+### 2026-11-14 — M3 Pulumi storage + build_vm, smoke run (status: review, branch `m3-infra`)
+
+**What changed:**
+- `common.storage`: `put_new` (PutObject with `If-None-Match: *` plus `x-amz-meta-sha256`; the same content again is a no-op, different content raises `AlreadyPublished`; single PUT only, at most 5 GB). `publish_dir` uploads `layer.json` last and skips dotfiles. `rasterio_session()` (boto3-backed `AWSSession`, so GDAL `/vsis3` works with the SSO profile locally). `common.publish` CLI: validate, then publish to `<orbital|rover>/<layer>/<site>/vN/`. Contract issue #15 is open for Person B.
+- `pipelines.smoke` plus Snakefile rules `smoke_build` → `smoke`: a synthetic 256x128 global DTM COG (IAU_2015:49915, lon 0-360) plus `layer.json`, published to `orbital/_smoke/global/v1/`. The build is byte-deterministic.
+- Image: `PYTHONPATH=/opt/msv` (Snakemake runs from `/work/<run_id>`; `pipelines` isn't pip-installed). Published **`v0.3.1`** (`sha256:51217658230af4378b7139b09bff0da4e16ca0adb2876db89439a2e7c0d47ef9`, CI run 43624825766). `v0.3.0` lacks the PYTHONPATH fix.
+- **Three stacks** (all Pulumi Python, S3 backend, KMS secrets):
+  - `infra/iam` (stack `main`, 9 resources, applied by the human): policies `msv-lane-a-write` (orbital, catalog, work) and `msv-lane-b-write` (rover, catalog, work); role and instance profile `msv-build` with boundary `agent-boundary` (SSM `/msv/*`, USGS buckets `astrogeo-ard`, `asc-pds-services` and `asc-astropedia` read, `/msv/build` logs, SSM core, lane A).
+  - `infra/storage` (stack `main`, 11 resources): bucket `mars-sv-123412369922` (protect, versioning, SSE-S3, public access block, BucketOwnerEnforced), lifecycle (`work/` expires after 14 d, aborted multipart uploads after 7 d), CORS GET/HEAD for `viewer_origins`, log group `/msv/build` (30 d). Bucket policy: deny PutObject on `orbital/*` and `rover/*` without `If-None-Match`; deny non-TLS. CloudFront plus OAC sits behind config `cdn` (default off, D-007).
+  - `infra/build_vm` (stack `job`): egress-only SG `msv-build`; launch template (AL2023 AMI from SSM, IMDSv2 required with hop limit 2, encrypted gp3 deleted on termination, shutdown=terminate, tags on instance, volume, ENI and spot request); a **one-time Spot `aws.ec2.Instance`**. Job settings come from env `MSV_TARGET/SITE/RUN_ID/IMAGE_TAG/INSTANCE_TYPES/VOLUME_GB`, then stack config, then defaults (`m7i.4xlarge`, 500 GB, `v0.3.1`). The user-data installs Docker, pulls the image, runs the target with awslogs, syncs `work/`, writes `work/<run_id>/DONE` (JSON) from an EXIT trap, then `shutdown -h now`. It also schedules a 72 h hard stop.
+- `scripts/run_job.sh <target> <site>`: Pulumi runs on `/dev/tty` (the human confirms `up` and `destroy`; no `--yes`). It tries each type in `MSV_INSTANCE_TYPES` in order, polls `DONE`, prints the CloudWatch tail, and destroys from an EXIT trap. It then checks instances and volumes. The log goes to `logs/` (gitignored).
+- Decisions: D-006 vCPU quota (#16), D-007 public read / CloudFront (#17).
+
+**What failed on the way (kept for the next session):**
+- `claude-agent` can't create IAM policies or roles in Pulumi (the read-after-create calls `ListPolicyTags`/`ListRoleTags` were denied, and the creates rolled back), so IAM went to a separate stack. After the human added permissions, `claude-agent` applied `infra/iam` itself.
+- CloudFront: "Your account must be verified" → D-007.
+- EC2 Fleet `instant` failed three times on CreateFleet validation (`TerminateInstancesWithExpiration` not supported; `MinTargetCapacity` only for single-type or single-AZ fleets; then "minimum target capacity should be >= 1"). Replaced by a plain Spot instance as agreed with the human. No instance launched in those attempts.
+- `run_job.sh` piping stdout through `tee` made Pulumi non-interactive; killed runs left stale state locks (removed by hand after checking the PID was gone). Delete a lock only with the exact key (`aws s3api delete-object`), not a concatenated path.
+- Smoke run 1 (v0.3.0): `No module named 'pipelines'` → v0.3.1.
+- `orbital/_smoke/global/v1/` contains a stray empty `.snakemake_timestamp` (from Snakemake `directory()`); v1 is immutable, so it stays. `publish_dir` now skips dotfiles.
+
+**Evidence (acceptance):**
+```
+$ cd infra/storage && pulumi preview
+Resources:
+    11 unchanged
+$ cd infra/build_vm && pulumi preview
+Resources:
+    + 5 to create
+$ MSV_INSTANCE_TYPES=m7i.xlarge,m6i.xlarge,m5.xlarge MSV_VOLUME_GB=50 bash scripts/run_job.sh smoke global   (run by human)
+[18:17:07] instance i-022383a7b5f6b086e m7i.xlarge in us-west-2d
+{"run_id":"smoke-global-20261114t181551z","target":"smoke","site":"global","image":"ghcr.io/naza-official/mars-sv:v0.3.1","status":0,"step":"done","started":"2026-11-14T18:16:50Z","finished":"2026-11-14T18:18:29Z"}
+[18:19:21] target smoke finished with status 0
+... 2 of 2 steps (100%) done
+... synced 4 files to s3://mars-sv-123412369922/work/smoke-global-20261114t181551z/
+[18:25:34] left: instances(pending/running/stopping/shutting-down)=0 volumes=0
+$ python -m common.validate s3://mars-sv-123412369922/orbital/_smoke/global/v1/
+  layer.json: layer.json
+  asset dtm: crs: Mars (2015) - Sphere / Ocentric / Equirectangular, clon = 180
+  asset dtm: size: 256x128x1 float32 block 512x512 overviews [] DEFLATE
+  asset dtm: kind: elevation
+  asset dtm: height range: -1999.8 .. 1999.8 m
+ok s3://mars-sv-123412369922/orbital/_smoke/global/v1/
+$ aws ec2 describe-instances --filters Name=tag:project,Values=mars-sv Name=instance-state-name,Values=running --query 'length(Reservations)'
+0
+$ aws ec2 describe-volumes --filters Name=tag:project,Values=mars-sv --query 'length(Volumes)'
+0
+$ docs/runs.md: two M3 smoke rows (m7i.xlarge Spot $0.0833/h, < $0.01 each)
+```
+Extra checks: on the real bucket, `put_new` → True, same again → False, changed → `AlreadyPublished`, plain PutObject → `AccessDenied` (test key and all versions deleted). Inside image v0.3.1: 23 storage, publish and smoke tests pass (botocore 1.43.127 supports `IfNoneMatch`). `ruff check .` is clean; `pytest -q` **88 passed**.
+
+**Open problems:**
+- D-006: quota of 5 vCPU; M4 needs the increase (or 4-vCPU builds).
+- D-007: CloudFront verification is needed before M5.
+- #15: Person B's review of the `common.storage` publish API.
+- `scripts/run_job.sh` has no executable bit (the agent's permission policy blocks commands on it); run it with `bash scripts/run_job.sh`.
+- The `msv-build` role's write to `orbital/*` under the boundary is proven by the smoke publish; its USGS read and SSM read are not exercised yet (M4).
+
+**Next step:** the human reviews the PR, sets M3 `done`, requests the vCPU quota (D-006) and opens the CloudFront support case (D-007). Then M4 (L1 global base).
+
 ### 2026-11-14 — M2 follow-up: M2 done, D-004 decided
 
 - PR #10 merged by human; human set **M2 `done`**.
