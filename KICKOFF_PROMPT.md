@@ -1,6 +1,6 @@
 # Kickoff prompt (paste into Claude Code at the repo root)
 
-You are the engineer for Person A's lane of the Mars Street View project: the orbital terrain layers (L1 global, L2 Jezero, L5 thermal), the shared L0 library, the build infrastructure, and the web viewer (L8). Person B builds the rover layers in parallel; the two lanes meet only through `layer.json` files in a shared Cloudflare R2 bucket.
+You are the engineer for Person A's lane of the Mars Street View project: the orbital terrain layers (L1 global, L2 Jezero, L5 thermal), the shared L0 library, the build infrastructure, and the web viewer (L8). Person B builds the rover layers in parallel; the two lanes meet only through `layer.json` files in a shared AWS S3 bucket (`mars-sv-123412369922`, us-west-2).
 
 Your operating manual is `CLAUDE.md`. Scope, order and acceptance checks are in `docs/milestones.json`; task detail is in `docs/plan-person-a.md`; formats and paths are fixed in `docs/contracts.md`. Treat those files as the source of truth over anything in this message.
 

@@ -8,7 +8,7 @@ Read only the section for the milestone you are working on. Acceptance checks li
 
 **Pilot site.** Jezero crater, centre about 18.4 N, 77.5 E. Gale crater comes later.
 
-**Budget and style.** Pet project, near-zero viewer traffic. Build in 2 to 3 day bursts on Spot EC2, tear everything down, keep only `out/` in Cloudflare R2. Target total cloud spend through M8: under $40.
+**Budget and style.** Pet project, near-zero viewer traffic. Build in 2 to 3 day bursts on Spot EC2, tear everything down, keep only `out/` in S3 bucket `mars-sv-123412369922`. Target total cloud spend through M8: under $40.
 
 **Environment.**
 | Item | Value |
@@ -16,7 +16,7 @@ Read only the section for the milestone you are working on. Acceptance checks li
 | AWS account | `123412369922`, region `us-west-2`, profile `claude-agent` (SSO, 4 h sessions) |
 | IAM limits | PowerUserAccess; roles only `msv-*` with boundary `agent-boundary`; no other regions |
 | Pulumi state | `s3://mars-sv-pulumi-state-123412369922`, secrets via `awskms://alias/pulumi` |
-| Output storage | Cloudflare R2 bucket `mars-sv` (created in M3) |
+| Output storage | AWS S3 bucket `mars-sv-123412369922`, `us-west-2` (created in M3). R2 dropped 2026-11-14: low traffic, one cloud |
 | Image registry | `ghcr.io/naza-official/mars-sv` |
 | Language | Python 3.11 for pipeline and infra (Pulumi Python); TypeScript for the viewer |
 
@@ -57,8 +57,8 @@ Coordinate with Person B: open a `contract` issue linking the PR.
 - `common/datum.py`: wrapper around ASP `dem_geoid` (areoid to sphere), plus a pure-Python check comparing a sample of points.
 - `common/cog.py`: write COG with overviews, compression, nodata, tags.
 - `common/layerjson.py`: JSON Schema for `layer.json` and `catalog/index.json`; read, write, validate.
-- `common/validate.py`: CLI; checks CRS, bounds, nodata, COG structure, `layer.json` against schema. Accepts local paths and `s3://` or `r2://` URIs.
-- `common/storage.py`: R2 client (S3-compatible via boto3) reading endpoint and keys from env or SSM.
+- `common/validate.py`: CLI; checks CRS, bounds, nodata, COG structure, `layer.json` against schema. Accepts local paths and `s3://` URIs.
+- `common/storage.py`: S3 client (boto3, AWS credential chain, `us-west-2`).
 - Fixtures: 256x256 crops of MDIM and MOLA around Jezero, under 5 MB total.
 - **Spike:** try 2 to 3 approaches on a 512x512 MOLA crop: `py3dtiles` or a similar library, a custom glTF mesher (grid to triangles in Mars-fixed XYZ with a tile-local origin), and any tiler that accepts a custom ellipsoid. Measure correctness (heights on the sphere), tile count and size, and whether 3DTilesRendererJS loads them. Write `docs/decisions/D-002-terrain-tiler.md` with a recommendation; the human decides.
 
@@ -70,13 +70,13 @@ Coordinate with Person B: open a `contract` issue linking the PR.
 
 ## M3 Infrastructure with Pulumi
 Two stacks under `infra/`, Pulumi Python, state in the S3 backend.
-- `infra/storage`: Cloudflare R2 bucket `mars-sv` (provider `pulumi-cloudflare`, token from Pulumi config secret `cloudflare:apiToken` set by the human), R2 access keys stored in SSM Parameter Store as SecureString `/msv/r2/*`.
+- `infra/storage`: S3 bucket `mars-sv-123412369922` (versioning on, SSE-S3, `protect=True`, tag `project=mars-sv`), lifecycle rule expiring `work/` after 14 days, CORS GET/HEAD for the viewer origin. IAM: A's writers get `orbital/*`, `catalog/*`, `work/*`; Person B's role gets `rover/*`, `catalog/*`, `work/*`; `common.storage` uploads every object under a published `vN/` with S3 conditional writes (`If-None-Match: *`) so a version can't be overwritten. Public read through CloudFront (origin access control), not a public bucket.
 - `infra/build_vm`, parameterised by `target`, `site`, `instance_type`, `volume_gb`, `image_tag`:
   - Spot instance in `us-west-2`, default `m7i.4xlarge`, fallbacks `m6i.4xlarge`, `r6i.2xlarge`.
   - gp3 root volume 500 GB, `delete_on_termination=true`.
   - IMDSv2 required; no SSH key; access through SSM Session Manager.
-  - Instance role `msv-build` with boundary `agent-boundary`; permissions: read SSM `/msv/*`, read USGS public buckets, write CloudWatch logs.
-  - `instance_initiated_shutdown_behavior = terminate`; user-data installs Docker, pulls the image, runs the target, syncs to R2, writes `work/<run_id>/DONE`, then `shutdown -h now`.
+  - Instance role `msv-build` with boundary `agent-boundary`; permissions: read SSM `/msv/*`, read USGS public buckets, read/write `mars-sv-123412369922` (`orbital/*`, `catalog/*`, `work/*`), write CloudWatch logs.
+  - `instance_initiated_shutdown_behavior = terminate`; user-data installs Docker, pulls the image, runs the target, syncs to `s3://mars-sv-123412369922`, writes `work/<run_id>/DONE`, then `shutdown -h now`.
   - Safety: user-data also schedules `shutdown -h +4320` (72 h) as a hard stop.
   - Tags on everything: `project=mars-sv`, `milestone`, `run_id`.
 - `scripts/run_job.sh <target> <site>`: `pulumi up` (asks human) then polls `work/<run_id>/DONE`, then `pulumi destroy` (asks human).
@@ -95,7 +95,7 @@ Snakemake rules in `layers/l1_global/`:
 - Mars sphere radius 3,396,190 m; camera controls for globe and close-up.
 - Loads `catalog/index.json`, then each layer's `layer.json`, then tilesets.
 - Site buttons fly to Jezero and Gale; show lon, lat, height under the cursor.
-- Deploy as a static site (Cloudflare Pages or R2 public bucket) via a GitHub Actions workflow.
+- Deploy as a static site to S3 + CloudFront (same distribution as the data or a `viewer/` prefix) via a GitHub Actions workflow with OIDC role `msv-viewer-deploy`.
 
 ## M6 L2 Jezero terrain (deadline for Person B)
 1. Query STAC by the Jezero bbox for HiRISE DTMs and orthos and nearby CTX DTMs; log chosen product IDs.
