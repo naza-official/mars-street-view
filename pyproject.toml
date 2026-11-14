@@ -18,6 +18,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.6"]
+rover = [
+  "pandas>=2.2",
+  "pyarrow>=15",
+  "pillow>=10",
+  "scipy>=1.11",
+  "requests>=2.31",
+  "fast-simplification>=0.1",
+]
 
 [tool.setuptools.packages.find]
 include = ["common*"]

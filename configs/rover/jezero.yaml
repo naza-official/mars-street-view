@@ -1,0 +1,15 @@
+# Rover-lane settings for Jezero (Person B). Site geometry (bbox, local CRS) lives in
+# configs/sites/jezero.yaml and is read through common.sites.load_site.
+site: jezero
+rover: perseverance
+mission_prefix: m2020
+sol_range: [0, 1900]
+
+# Pilot street-view stop: Octavia E. Butler landing site, first Navcam 360 (sol 2).
+# Most Navcam mosaic products of any stop (12 cyl-perspective, 12 cylindrical, 36 ortho)
+# and 43 meshes; inside the Jezero HiRISE ortho.
+pilot_stop:
+  site: 1
+  drive: 52
+  sol: 2
+  stop_id: m2020_site1_drive52
