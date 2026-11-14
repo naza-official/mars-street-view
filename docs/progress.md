@@ -11,6 +11,7 @@ Newest session first. Each entry: date, milestone, what changed, evidence (comma
 | D-004 | How the build VM pulls the GHCR image | **decided 2026-11-14 by human: package public, verified anonymous pull**, issue #12 |
 | D-005 | ISIS in the build image | **decided 2026-11-14 by human: optional, `WITH_ISIS=0` default**, `docs/decisions/D-005-isis-optional.md` |
 | D-006 | EC2 vCPU quota (5) vs 16-vCPU build VM | open, issue #16, `docs/decisions/D-006-ec2-vcpu-quota.md`, rec: request Spot standard quota 32 |
+| D-008 | Meaning of "MDIM shift at Jezero < 232 m" | **decided 2026-11-14 by human: datum-conversion shift (0 m); MDIM–MOLA registration (~0.9 km) recorded in notes**, `docs/decisions/D-008-mdim-shift.md` |
 | D-007 | Public read for the viewer (CloudFront needs account verification) | open, issue #17, `docs/decisions/D-007-public-read.md`, rec: AWS Support case, then `cdn=true` |
 
 ## Sessions
