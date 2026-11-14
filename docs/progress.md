@@ -8,8 +8,72 @@ Newest session first. Each entry: date, milestone, what changed, evidence (comma
 | D-001 | CRS code written in layer.json (proposed IAU_2015:49900) | open, issue #2, `docs/decisions/D-001-crs-code.md`, rec: keep 49900 as body+datum code |
 | D-002 | Terrain tiler for a Mars sphere | open, issue #5, `docs/decisions/D-002-terrain-tiler.md`, rec: A (own mesher → 3D Tiles 1.1 GLB) |
 | D-003 | One R2 bucket with prefixes vs two buckets | **decided 2026-11-14 by human: no R2; one AWS S3 bucket `mars-sv-123412369922` (us-west-2)**, issue #3 |
+| D-004 | How the build VM pulls the private GHCR image | open, issue #12, `docs/decisions/D-004-image-pull.md`, rec: make package public |
 
 ## Sessions
+### 2026-11-14 — M2 Container image on GHCR (status: review, PR #10)
+
+Branch `m2-container-image`. Image `ghcr.io/naza-official/mars-sv:v0.1.0` (= `sha-e65d8ed` = `latest`), digest `sha256:11ef1e286fac9ab274aa9ea1116d812592b6e9abc7a7d41ac96373c6176d2def`. Decision issue #12 (D-004).
+
+**What changed:**
+- `docker/Dockerfile`: `condaforge/miniforge3:26.9.4-0`, **linux/amd64 only** (ISIS has no linux-aarch64 build; the build VM is x86). Layers: apt runtime libs (ASP needs `libx11-6 libxau6 libxext6 libsm6 libice6`); conda env `isis` (`isis=10.0.0` from `usgs-astrogeology`, minus `include/` and `*.a`: saves 0.66 GB); ASP 3.7.0 release tarball (`StereoPipeline-3.7.0-2026-06-08-x86_64-Linux`, sha256-checked) in `/opt/asp`; conda env `msv` (`docker/env-msv.yml`: python 3.11, gdal 3.10, rasterio 1.4, pyproj 3.7, numpy 2.2, pystac(-client), boto3, jsonschema; snakemake 9.27.1 from pip because conda-forge doesn't carry it, only bioconda); repo `common`, `pipelines`, `configs` in `/opt/msv`, `pip install .[tiler]`.
+- PATH order: `msv` env, then base conda, then ASP `bin`. ISIS is **not** on PATH (it has its own python/GDAL); `ISISROOT=/opt/conda/envs/isis`, `ISISDATA=/isisdata` (empty, mount at runtime). The ASP wrappers unset GDAL/PROJ env, so the msv GDAL doesn't break them.
+- `docker/entrypoint.sh`: `run <target>` → `snakemake --cores all --rerun-incomplete --directory /work/<run_id> --config site= run_id= bucket=`, then `python -m pipelines.sync_work` uploads `/work/<run_id>` to `s3://$MSV_BUCKET/work/<run_id>/` (skips `.snakemake/`, refuses keys outside `work/`). Env: `MSV_SITE` (required), `MSV_RUN_ID`, `MSV_BUCKET`, `MSV_SYNC`. Any other argv is exec'd as is.
+- `pipelines/Snakefile`: `configfile` now resolved from `workflow.basedir`, so it works with `--directory`.
+- `pyproject.toml`: `tiler` extra (spike deps: py3dtiles 12.1.1, quantized-mesh-encoder 0.5.0, pydelatin 0.4.0, pygltflib, scipy). Covers D-002 options A to C until the decision lands.
+- `.github/workflows/image.yml`: on PRs touching docker/common/pipelines it builds and smoke-tests without pushing; on `v*` tags (and manual dispatch) it pushes to GHCR. Clean-runner build time 8 min.
+- `scripts/check_dem_geoid.py`, `tests/pipelines/test_sync_work.py` (3 tests; suite 61).
+- `docs/decisions/D-004-image-pull.md`.
+
+**Findings worth keeping:**
+- **`dem_geoid` verified against the Python areoid** (open from M1): on `tests/fixtures/mola_jezero.tif`, `--geoid mola --reverse-adjustment` minus `common.datum.areoid_offset` = mean 0.024 m, max |0.84| m over 500 px. ASP warns `Unknown datum: Mars (2015) - Sphere. Guessing: D_MARS.` That guess is correct (3,396,190 m sphere), but watch for it if a DEM's CRS changes. ASP uses its bundled `/opt/asp/share/geoids/mola_areoid.tif`.
+- ASP 3.7.0 also ships aarch64-Linux tarballs, but ISIS 10 doesn't, so the image can't be multi-arch while it includes ISIS.
+- ISIS is 5.1 GB of the 8.97 GB. If M4/M6 never call ISIS apps (they use pre-made mosaics and DTMs), a `WITH_ISIS=0` build arg would cut the image to about 3.9 GB. Not done: the plan asks for ISIS.
+- The GHCR package is **private** (anonymous manifest request returns 404) even though the repo is public → D-004.
+
+**Evidence (acceptance, against the published image after `docker rmi` of the local build and `docker pull`):**
+```
+$ docker run --rm ghcr.io/naza-official/mars-sv:v0.1.0 python -m common.validate --help
+usage: python -m common.validate [-h] target
+
+Validate a COG, a layer.json / catalog index, or a layer folder (local path or
+s3:// URI).
+exit 0
+$ docker run --rm ghcr.io/naza-official/mars-sv:v0.1.0 pc_align --help
+Usage: /opt/asp/libexec/pc_align --max-displacement arg [other options] <reference cloud> <source cloud> -o <output prefix>
+
+  [ASP 3.7.0]
+  Build date: 2026-06-08
+exit 0
+$ docker run --rm ghcr.io/naza-official/mars-sv:v0.1.0 snakemake --version
+9.27.1
+exit 0
+```
+Image size: **8.97 GB uncompressed** (8,972,996,581 bytes), **2.91 GB compressed** (sum of layer sizes in the manifest, 2,912,806,593 bytes).
+
+Extra checks (local `mars-sv:dev` build, same Dockerfile):
+```
+$ docker run --rm mars-sv:dev dem_geoid --help        -> exit 0, [ASP 3.7.0]
+$ docker run --rm -v $PWD:/repo -w /repo mars-sv:dev python scripts/check_dem_geoid.py tests/fixtures/mola_jezero.tif
+{"n": 500, "mean_m": 0.02383300781261278, "max_abs_m": 0.8413085937502274}
+exit 0
+$ ... python -c 'import py3dtiles,pydelatin,pygltflib,quantized_mesh_encoder,rasterio'  -> tiler ok, rasterio gdal 3.10.3
+$ ... cam2map -help (ISISROOT set)                     -> exit 0
+$ docker run --rm -e MSV_SITE=jezero -e MSV_RUN_ID=t1 -e MSV_SYNC=0 mars-sv:dev run all
+1 of 1 steps (100%) done
+exit 0
+$ ruff check .        -> All checks passed!
+$ pytest -q           -> 61 passed
+```
+CI: PR #10 `ci` success (43608466756), `image` build+smoke success (43608466744, 7m59s); tag `v0.1.0` `image` build+smoke+push success (43612508018).
+
+**Open problems:**
+- D-004 (#12): the build VM can't pull the private package anonymously. Needs a decision before M3 user-data.
+- `run <target>` sync path tested with `MSV_SYNC=0` only; the S3 upload is unit-tested with a mock. First real use is the M3 smoke run.
+- No cloud resources used this session; nothing to log in `docs/runs.md`.
+
+**Next step:** human reviews PR #10, decides D-004, sets M2 `done`. Then M3 (Pulumi storage + build_vm stacks, smoke run) with image `v0.1.0`.
+
 ### 2026-11-14 — M1 follow-up: M1 done, storage R2 → S3
 
 - Human set **M1 `done`** (PR #7 merged 2026-11-14T14:38Z).

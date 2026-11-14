@@ -33,7 +33,7 @@
     {
       "id": "M2",
       "title": "Container image on GHCR",
-      "status": "in_progress",
+      "status": "review",
       "depends_on": ["M1"],
       "human_gate": "PR review",
       "acceptance": [
