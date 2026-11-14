@@ -46,7 +46,7 @@
     {
       "id": "M3",
       "title": "Pulumi storage (S3) + build_vm stacks, smoke run",
-      "status": "review",
+      "status": "done",
       "depends_on": ["M2"],
       "human_gate": "Approve first pulumi up and destroy per stack",
       "acceptance": [

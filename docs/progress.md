@@ -6,7 +6,7 @@ Newest session first. Each entry: date, milestone, what changed, evidence (comma
 | ID | Question | Status |
 |---|---|---|
 | D-001 | CRS code written in layer.json (proposed IAU_2015:49900) | open, issue #2, `docs/decisions/D-001-crs-code.md`, rec: keep 49900 as body+datum code |
-| D-002 | Terrain tiler for a Mars sphere | open, issue #5, `docs/decisions/D-002-terrain-tiler.md`, rec: A (own mesher → 3D Tiles 1.1 GLB) |
+| D-002 | Terrain tiler for a Mars sphere | **decided 2026-11-14 by human: A (own mesher → 3D Tiles 1.1 GLB)**, issue #5 |
 | D-003 | One R2 bucket with prefixes vs two buckets | **decided 2026-11-14 by human: no R2; one AWS S3 bucket `mars-sv-123412369922` (us-west-2)**, issue #3 |
 | D-004 | How the build VM pulls the GHCR image | **decided 2026-11-14 by human: package public, verified anonymous pull**, issue #12 |
 | D-005 | ISIS in the build image | **decided 2026-11-14 by human: optional, `WITH_ISIS=0` default**, `docs/decisions/D-005-isis-optional.md` |
