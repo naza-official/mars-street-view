@@ -9,3 +9,4 @@ raw/
 .claude/settings.local.json
 *.egg-info/
 .snakemake/
+node_modules/

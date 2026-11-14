@@ -1,0 +1,12 @@
+{
+  "name": "msv-tiler-spike",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "3d-tiles-renderer": "0.5.4",
+    "three": "0.180.0"
+  },
+  "devDependencies": {
+    "3d-tiles-validator": "0.6.1"
+  }
+}
