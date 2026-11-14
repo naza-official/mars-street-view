@@ -19,7 +19,7 @@
     {
       "id": "M1",
       "title": "L0 common library + terrain-tiler spike",
-      "status": "review",
+      "status": "done",
       "depends_on": ["M0"],
       "human_gate": "PR review by A and B; decision D-002",
       "acceptance": [
@@ -45,15 +45,15 @@
     },
     {
       "id": "M3",
-      "title": "Pulumi storage + build_vm stacks, smoke run",
+      "title": "Pulumi storage (S3) + build_vm stacks, smoke run",
       "status": "todo",
       "depends_on": ["M2"],
-      "human_gate": "Cloudflare token; approve first pulumi up and destroy per stack",
+      "human_gate": "Approve first pulumi up and destroy per stack",
       "acceptance": [
         "cd infra/storage && pulumi preview",
         "cd infra/build_vm && pulumi preview",
         "scripts/run_job.sh smoke global completes",
-        "python -m common.validate r2://mars-sv/orbital/_smoke/global/v1/",
+        "python -m common.validate s3://mars-sv-123412369922/orbital/_smoke/global/v1/",
         "aws ec2 describe-instances --filters Name=tag:project,Values=mars-sv Name=instance-state-name,Values=running --query 'length(Reservations)' returns 0",
         "aws ec2 describe-volumes --filters Name=tag:project,Values=mars-sv --query 'length(Volumes)' returns 0",
         "docs/runs.md has the smoke run"
@@ -66,7 +66,7 @@
       "depends_on": ["M3"],
       "human_gate": "Approve build run",
       "acceptance": [
-        "python -m common.validate r2://mars-sv/orbital/l1_global/global/v1/",
+        "python -m common.validate s3://mars-sv-123412369922/orbital/l1_global/global/v1/",
         "catalog/index.json lists l1_global/global v1",
         "measured MDIM shift at Jezero under 232 m, recorded in layer.json notes",
         "no running instances or volumes tagged project=mars-sv"
@@ -91,7 +91,7 @@
       "depends_on": ["M4"],
       "human_gate": "Approve build run; confirm seam visually",
       "acceptance": [
-        "python -m common.validate r2://mars-sv/orbital/l2_regional/jezero/v1/",
+        "python -m common.validate s3://mars-sv-123412369922/orbital/l2_regional/jezero/v1/",
         "alignment_report.json present with RMS per pc_align step",
         "catalog/index.json lists l2_regional/jezero v1",
         "GitHub issue opened for Person B with paths",
@@ -118,7 +118,7 @@
       "depends_on": ["M5"],
       "human_gate": "Licence check; approve build run",
       "acceptance": [
-        "python -m common.validate r2://mars-sv/orbital/l5_thermal/jezero/v1/",
+        "python -m common.validate s3://mars-sv-123412369922/orbital/l5_thermal/jezero/v1/",
         "licence recorded in layer.json sources",
         "viewer overlay toggle and hover value work (screenshot)"
       ]

@@ -148,14 +148,14 @@ class Target:
 
     def child(self, name: str) -> "Target":
         if self.uri is not None:
-            return Target(f"{self.uri.scheme}://{self.uri.bucket}/{self.uri.child(name).key}")
+            return Target(self.uri.child(name).uri)
         return Target(str(Path(self.raw) / name))
 
     def exists(self) -> bool:
         if self.uri is None:
             return Path(self.raw).exists()
-        return self.uri.key in storage.list_keys(storage.ObjectUri(
-            self.uri.scheme, self.uri.bucket, self.uri.key.rsplit("/", 1)[0]))
+        parent = storage.ObjectUri(self.uri.bucket, self.uri.key.rsplit("/", 1)[0])
+        return self.uri.key in storage.list_keys(parent)
 
     def read_json(self) -> dict:
         if self.uri is None:
@@ -166,7 +166,7 @@ class Target:
         return self.uri.gdal_path if self.uri is not None else self.raw
 
     def gdal_env(self) -> dict[str, str]:
-        return storage.gdal_env(self.uri.scheme) if self.uri is not None else {}
+        return storage.gdal_env() if self.uri is not None else {}
 
     def is_raster(self) -> bool:
         return self.raw.lower().endswith(RASTER_SUFFIXES)
@@ -224,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m common.validate",
         description="Validate a COG, a layer.json / catalog index, or a layer folder "
-                    "(local path, s3:// or r2:// URI).",
+                    "(local path or s3:// URI).",
     )
     parser.add_argument("target", help="path or URI")
     args = parser.parse_args(argv)

@@ -7,9 +7,30 @@ Newest session first. Each entry: date, milestone, what changed, evidence (comma
 |---|---|---|
 | D-001 | CRS code written in layer.json (proposed IAU_2015:49900) | open, issue #2, `docs/decisions/D-001-crs-code.md`, rec: keep 49900 as body+datum code |
 | D-002 | Terrain tiler for a Mars sphere | open, issue #5, `docs/decisions/D-002-terrain-tiler.md`, rec: A (own mesher → 3D Tiles 1.1 GLB) |
-| D-003 | One R2 bucket with prefixes vs two buckets | open, issue #3, `docs/decisions/D-003-r2-buckets.md`, rec: one bucket + write guard in `common/storage.py` |
+| D-003 | One R2 bucket with prefixes vs two buckets | **decided 2026-11-14 by human: no R2; one AWS S3 bucket `mars-sv-123412369922` (us-west-2)**, issue #3 |
 
 ## Sessions
+### 2026-11-14 — M1 follow-up: M1 done, storage R2 → S3
+
+- Human set **M1 `done`** (PR #7 merged 2026-11-14T14:38Z).
+- Human decision: **no Cloudflare R2**; outputs go to one AWS S3 bucket `mars-sv-123412369922` in `us-west-2`. The account-suffixed name avoids global-name squatting; `mars-sv` was free (HeadBucket 404) but could be claimed by anyone before M3.
+- `docs/milestones.json`: M1 → `done`; M3 gate no longer needs a Cloudflare token; acceptance URIs `r2://mars-sv/...` → `s3://mars-sv-123412369922/...`.
+- `docs/contracts.md`: bucket layout header now S3; IAM per-lane prefix rule; changelog entry. Schema unchanged (layer.json only has relative paths). Needs Person B's review (contract issue).
+- `common/storage.py`: R2 config, env keys and SSM key lookup removed; plain boto3 S3 client in `us-west-2` with the default credential chain; only `s3://` URIs. `common/validate.py` adjusted. Tests rewritten.
+- `CLAUDE.md`, `docs/plan-person-a.md` (M3 `infra/storage`, build VM role, M5 deploy via S3 + CloudFront), `docs/decisions/D-003` updated.
+
+Evidence:
+```
+$ ruff check .
+All checks passed!
+$ pytest -q
+58 passed
+```
+
+Open: Person B needs AWS access to write `rover/*` (IAM role in this account or cross-account). Decide in M3.
+
+Next step: M2 (container image on GHCR).
+
 ### 2026-11-14 — M1 L0 common library + terrain-tiler spike (status: review)
 
 Branch `m1-l0-common`. Contract review issue #6 (Person B), decision issue #5 (D-002).

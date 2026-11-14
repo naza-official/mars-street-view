@@ -16,7 +16,7 @@ Option 3: keep the one-bucket contract and add the guard in `common/storage.py` 
 During M3, check whether R2 bucket locks / retention rules can make published `vN/` prefixes immutable server-side, and add one if available.
 
 ## Decision
-_(human)_
+2026-11-14 (human): drop Cloudflare R2; use one AWS S3 bucket `mars-sv-123412369922` in `us-west-2` with the contract's prefixes. IAM policies scope each lane to its prefix, which removes the main risk of option 1. Immutability of published `vN/`: `common.storage` writes with S3 conditional writes (`If-None-Match: *`), added in M3.
 
 ## Date
 2026-11-14 (opened)

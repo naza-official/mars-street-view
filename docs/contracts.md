@@ -24,7 +24,7 @@ Changing anything here requires an issue labeled `contract`, a schema version bu
 
 Meshes store small local coordinates plus a transform to Mars-fixed XYZ to avoid float32 jitter.
 
-## Bucket layout (R2, bucket `mars-sv`)
+## Bucket layout (AWS S3, bucket `mars-sv-123412369922`, region `us-west-2`)
 ```
 orbital/<layer>/<site|global>/vN/     A writes
 rover/<layer>/<site>/vN/              B writes
@@ -34,6 +34,7 @@ work/<run_id>/                        intermediate step outputs, deletable
 ```
 - Published `vN/` folders are immutable.
 - A version is ready only when its `layer.json` exists; upload it last.
+- Lane write access is enforced by IAM: A's role writes `orbital/*`, B's role writes `rover/*`, both write `catalog/*` and `work/*`.
 
 ## layer.json (schema 1.0)
 ```json
@@ -85,3 +86,6 @@ The viewer hides stops with `alignment_rms_m` above a configurable threshold (de
 | A to B | Jezero DTM + ortho COGs on the sphere datum | `orbital/l2_regional/jezero/v1/dtm.tif`, `ortho.tif` |
 | B to A | Stop graph, stop records, per-stop tilesets | `rover/l3_poses/jezero/vN/`, `rover/l4_streetview/jezero/vN/` |
 | Both | `common/` package version and image tag | `pyproject.toml`, `ghcr.io/naza-official/mars-sv` |
+
+## Changelog
+- 2026-11-14: storage moved from Cloudflare R2 (`mars-sv`) to AWS S3 (`mars-sv-123412369922`, us-west-2), decided by the human (low traffic, one cloud). Resolves D-003. Schema version unchanged: `layer.json` holds relative asset paths only.
