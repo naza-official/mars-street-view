@@ -1,0 +1,19 @@
+name: mars-sv
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - gdal
+  - rasterio
+  - pyproj
+  - pystac
+  - pystac-client
+  - snakemake
+  - boto3
+  - jsonschema
+  - pyyaml
+  - pytest
+  - ruff
+  - pip
+  - pip:
+      - -e .
