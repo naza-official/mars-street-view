@@ -39,6 +39,7 @@ COPY configs ./configs
 RUN /opt/conda/envs/msv/bin/pip install --no-cache-dir ".[tiler]"
 
 ENV PATH=/opt/conda/envs/msv/bin:/opt/conda/bin:${ASP_DIR}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    PYTHONPATH=/opt/msv \
     MSV_WORK=/work \
     MSV_BUCKET=mars-sv-123412369922 \
     AWS_REGION=us-west-2
