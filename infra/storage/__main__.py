@@ -110,22 +110,25 @@ def cdn(bucket: aws.s3.Bucket) -> aws.cloudfront.Distribution:
     )
 
 
-def bucket_policy_document(bucket_arn: str, distribution_arn: str) -> str:
-    return json.dumps({
-        "Version": "2012-10-17",
-        "Statement": [
-            {"Sid": "CloudFrontRead", "Effect": "Allow",
-             "Principal": {"Service": "cloudfront.amazonaws.com"}, "Action": "s3:GetObject",
-             "Resource": object_arns(READ_PREFIXES),
-             "Condition": {"StringEquals": {"AWS:SourceArn": distribution_arn}}},
-            {"Sid": "DenyOverwritePublished", "Effect": "Deny", "Principal": "*",
-             "Action": "s3:PutObject", "Resource": object_arns(PUBLISHED_PREFIXES),
-             "Condition": {"Null": {"s3:if-none-match": "true"}}},
-            {"Sid": "DenyInsecureTransport", "Effect": "Deny", "Principal": "*",
-             "Action": "s3:*", "Resource": [bucket_arn, f"{bucket_arn}/*"],
-             "Condition": {"Bool": {"aws:SecureTransport": "false"}}},
-        ],
-    })
+def cloudfront_read(distribution_arn: str) -> dict:
+    return {"Sid": "CloudFrontRead", "Effect": "Allow",
+            "Principal": {"Service": "cloudfront.amazonaws.com"}, "Action": "s3:GetObject",
+            "Resource": object_arns(READ_PREFIXES),
+            "Condition": {"StringEquals": {"AWS:SourceArn": distribution_arn}}}
+
+
+def bucket_policy_document(bucket_arn: str, distribution_arn: str | None) -> str:
+    statements = [
+        {"Sid": "DenyOverwritePublished", "Effect": "Deny", "Principal": "*",
+         "Action": "s3:PutObject", "Resource": object_arns(PUBLISHED_PREFIXES),
+         "Condition": {"Null": {"s3:if-none-match": "true"}}},
+        {"Sid": "DenyInsecureTransport", "Effect": "Deny", "Principal": "*",
+         "Action": "s3:*", "Resource": [bucket_arn, f"{bucket_arn}/*"],
+         "Condition": {"Bool": {"aws:SecureTransport": "false"}}},
+    ]
+    if distribution_arn:
+        statements.insert(0, cloudfront_read(distribution_arn))
+    return json.dumps({"Version": "2012-10-17", "Statement": statements})
 
 
 def log_group() -> aws.cloudwatch.LogGroup:
@@ -137,10 +140,11 @@ def log_group() -> aws.cloudwatch.LogGroup:
 bucket = make_bucket()
 lifecycle(bucket)
 cors(bucket, config.get_object("viewer_origins") or ["http://localhost:5173"])
-distribution = cdn(bucket)
+distribution = cdn(bucket) if config.get_bool("cdn") else None
+distribution_arn = distribution.arn if distribution else None
 aws.s3.BucketPolicy(
     "bucket-policy", bucket=bucket.id,
-    policy=pulumi.Output.all(bucket.arn, distribution.arn).apply(
+    policy=pulumi.Output.all(bucket.arn, distribution_arn).apply(
         lambda args: bucket_policy_document(*args)),
     opts=opts,
 )
@@ -148,6 +152,7 @@ logs = log_group()
 
 pulumi.export("bucket", bucket.bucket)
 pulumi.export("bucket_arn", bucket.arn)
-pulumi.export("cdn_domain", distribution.domain_name)
-pulumi.export("cdn_id", distribution.id)
 pulumi.export("log_group", logs.name)
+if distribution:
+    pulumi.export("cdn_domain", distribution.domain_name)
+    pulumi.export("cdn_id", distribution.id)
