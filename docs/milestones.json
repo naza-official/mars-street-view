@@ -19,7 +19,7 @@
     {
       "id": "M1",
       "title": "L0 common library + terrain-tiler spike",
-      "status": "in_progress",
+      "status": "review",
       "depends_on": ["M0"],
       "human_gate": "PR review by A and B; decision D-002",
       "acceptance": [

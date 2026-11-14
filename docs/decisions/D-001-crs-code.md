@@ -26,7 +26,14 @@ IAU_2015:49901 | Mars (2015) / Ographic | Geographic 2D CRS | R= 3396190.0 33762
 
 ## Recommendation
 Option 1 now. `layer.json` keeps `"crs": "IAU_2015:49900"` meaning "body and datum", and `common.crs` builds every projected CRS on top of `CRS("IAU_2015:49900")` so GeoTIFFs carry a datum PROJ can identify. Move to option 3 only if a consumer needs the 2D CRS without opening a raster.
-Before closing, confirm the GDAL in the M2 image resolves `IAU_2015:49900` (GDAL ≥ 3.5 with PROJ ≥ 8.2); not checked yet because GDAL is not installed locally.
+Before closing, confirm the GDAL in the M2 image resolves `IAU_2015:49900` (GDAL ≥ 3.5 with PROJ ≥ 8.2).
+
+Update 2026-11-14 (M1): the GDAL 3.10.3 bundled in the rasterio 1.4.4 wheel resolves `IAU_2015:49900` and `49915`.
+GeoTIFF keys only carry EPSG codes, so after a write/read round trip a COG's CRS has no authority attached.
+PROJ identifies it again: the projected CRS matches `IAU_2015:49915` at confidence ≥ 90, and the geodetic part equals
+49900 up to axis order (49900 is lat/lon, GeoTIFF is lon/lat). `common.crs.base_authority` compares with
+`ignore_axis_order=True`, so `common.validate` can enforce option 1 on every raster. The global CRS uses
+`IAU_2015:49915` (sphere equirectangular, clon = 180), which matches the contract's "0 to 360 E".
 
 ## Decision
 _(human)_
