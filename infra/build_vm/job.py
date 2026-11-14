@@ -11,7 +11,7 @@ RUN_ID = re.compile(r"^[a-z0-9][a-z0-9_.-]{2,80}$")
 IMAGE_REPO = "ghcr.io/naza-official/mars-sv"
 DEFAULT_INSTANCE_TYPES = ("m7i.4xlarge", "m6i.4xlarge", "r6i.2xlarge")
 DEFAULT_VOLUME_GB = 500
-DEFAULT_IMAGE_TAG = "v0.3.0"
+DEFAULT_IMAGE_TAG = "v0.3.1"
 HARD_STOP_MIN = 72 * 60
 
 
