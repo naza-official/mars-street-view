@@ -9,6 +9,7 @@ Newest session first. Each entry: date, milestone, what changed, evidence (comma
 | D-002 | Terrain tiler for a Mars sphere | open, issue #5, `docs/decisions/D-002-terrain-tiler.md`, rec: A (own mesher → 3D Tiles 1.1 GLB) |
 | D-003 | One R2 bucket with prefixes vs two buckets | **decided 2026-11-14 by human: no R2; one AWS S3 bucket `mars-sv-123412369922` (us-west-2)**, issue #3 |
 | D-004 | How the build VM pulls the private GHCR image | open, issue #12, `docs/decisions/D-004-image-pull.md`, rec: make package public |
+| D-005 | ISIS in the build image | **decided 2026-11-14 by human: optional, `WITH_ISIS=0` default**, `docs/decisions/D-005-isis-optional.md` |
 
 ## Sessions
 ### 2026-11-14 — M2 Container image on GHCR (status: review, PR #10)
@@ -83,9 +84,24 @@ both: common.validate --help, pc_align --help, snakemake --version, dem_geoid --
 isis: cam2map -help -> exit 0
 slim: check_dem_geoid.py -> {"n": 500, "mean_m": 0.0238, "max_abs_m": 0.8413}; run all -> 1 of 1 steps done
 ```
-- `ghcr.io/naza-official/mars-sv:v0.1.0` still has ISIS. The slim image needs a new tag (`v0.2.0`), then the acceptance commands re-run against it.
+- Published **`ghcr.io/naza-official/mars-sv:v0.2.0`** (= `sha-350f3de` = `latest`), digest `sha256:bd6ebe452a47c89e9ce453b9169fd83d6307af59ec309b99246c13817e4c118c`, workflow run 43615695340 (tag pushed with human approval). This is the image for M3. `v0.1.0` (ISIS included) stays on GHCR.
+- Acceptance re-run against the pulled `v0.2.0` (local images removed first):
+```
+$ docker run --rm ghcr.io/naza-official/mars-sv:v0.2.0 python -m common.validate --help
+usage: python -m common.validate [-h] target
+exit 0
+$ docker run --rm ghcr.io/naza-official/mars-sv:v0.2.0 pc_align --help
+Usage: /opt/asp/libexec/pc_align --max-displacement arg [other options] <reference cloud> <source cloud> -o <output prefix>
+  [ASP 3.7.0]
+exit 0
+$ docker run --rm ghcr.io/naza-official/mars-sv:v0.2.0 snakemake --version
+9.27.1
+exit 0
+dem_geoid --help exit 0; ISISROOT=unset; envs: msv
+```
+- **Image size v0.2.0: 3.90 GB uncompressed (3,897,754,607 bytes), 1.31 GB compressed (1,309,750,149 bytes).** The CI smoke step's `docker image inspect .Size` printed 1.31 GB on this run but 8.97 GB (uncompressed) on the v0.1.0 run, so the runner's Docker seems to have switched to reporting compressed size. Trust the numbers above, not that CI line.
 
-**Next step:** human reviews PR #10, decides D-004, sets M2 `done`. Then M3 (Pulumi storage + build_vm stacks, smoke run) with image `v0.1.0`.
+**Next step:** human reviews PR #10, decides D-004, sets M2 `done`. Then M3 (Pulumi storage + build_vm stacks, smoke run) with image `v0.2.0`.
 
 ### 2026-11-14 — M1 follow-up: M1 done, storage R2 → S3
 
