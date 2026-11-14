@@ -12,6 +12,24 @@ Newest session first. Each entry: date, milestone, what changed, evidence (comma
 | D-005 | ISIS in the build image | **decided 2026-11-14 by human: optional, `WITH_ISIS=0` default**, `docs/decisions/D-005-isis-optional.md` |
 
 ## Sessions
+### 2026-11-14 — M3 Pulumi storage + build_vm, smoke run (status: in progress, branch `m3-infra`)
+
+**Done (commit 378fcc5):**
+- `common.storage.put_new` uses `If-None-Match: *` plus `x-amz-meta-sha256`. A retry with identical content is a no-op; different content raises `AlreadyPublished`. Files over 5 GB are refused because there is no multipart path. `publish_dir` uploads `layer.json` last. `common.publish` CLI validates the folder before publishing. Contract issue #15 is open for Person B.
+- `pipelines.smoke` writes a synthetic 256x128 global DTM COG (IAU_2015:49915, lon 0-360) plus `layer.json`. Snakefile rules `smoke_build` → `smoke` (publish to `orbital/_smoke/global/v1/`).
+- `infra/storage` (stack `main`) contains the bucket (protect, versioning, SSE-S3, public access block), a lifecycle rule (`work/` 14 d), CORS, CloudFront with OAC, a bucket policy (CloudFront read; deny PutObject without If-None-Match on `orbital/*`, `rover/*`; deny non-TLS), `msv-lane-{a,b}-write` policies and log group `/msv/build`. `pulumi preview`: **15 to create**, no errors.
+- `infra/build_vm` (stack `job`) contains role/profile `msv-build` with the boundary, an egress-only SG, a launch template (AL2023, IMDSv2 hop 2, gp3 encrypted with delete-on-termination, shutdown=terminate, tags on instance/volume/ENI/spot request), and an EC2 Fleet `instant` Spot with `capacity-optimized-prioritized` over the type × default-subnet list. The job settings come from env (`MSV_TARGET/SITE/RUN_ID/IMAGE_TAG/INSTANCE_TYPES/VOLUME_GB`), falling back to stack config and then defaults. The user-data writes `work/<run_id>/DONE` (JSON status) from an EXIT trap and schedules a 72 h hard stop. Its preview fails with `KeyError: 'bucket'` until the storage stack is up (StackReference), which is expected.
+- `scripts/run_job.sh <target> <site>` needs a TTY: pulumi up → poll DONE → destroy in an EXIT trap → instance/volume check. Log goes to `logs/run_job-<run_id>.log`.
+- Tests: `ruff check .` clean, `pytest -q` **86 passed**.
+- `.venv` needed `pip` installed (uv venv) for Pulumi's pip toolchain.
+
+**Blockers / findings:**
+- **vCPU quota is 5** (Spot and On-Demand standard) → D-006 (`docs/decisions/D-006-ec2-vcpu-quota.md`). Recommendation: request 32. The smoke run uses 4-vCPU types.
+- The smoke target is not in image v0.2.0, so it needs **v0.3.0** built from this branch (tag push; human approval).
+- The agent's permission policy blocked every command touching `scripts/run_job.sh` (chmod, `bash -n`), so the script is committed **without the executable bit and not syntax-checked by the agent**. `logs/` is not yet in `.gitignore`.
+
+**Next step (human-gated):** (1) `cd infra/storage && pulumi up`; (2) push tag `v0.3.0` → image workflow; (3) `cd infra/build_vm && pulumi preview`; (4) in a terminal: `MSV_INSTANCE_TYPES=m7i.xlarge,m6i.xlarge,m5.xlarge MSV_VOLUME_GB=50 bash scripts/run_job.sh smoke global`; (5) then run the acceptance checks, log to `docs/runs.md`, open the PR.
+
 ### 2026-11-14 — M2 follow-up: M2 done, D-004 decided
 
 - PR #10 merged by human; human set **M2 `done`**.
