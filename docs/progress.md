@@ -15,6 +15,11 @@ Newest session first. Each entry: date, milestone, what changed, evidence (comma
 | D-007 | Public read for the viewer (CloudFront needs account verification) | open, issue #17, `docs/decisions/D-007-public-read.md`, rec: AWS Support case, then `cdn=true` |
 
 ## Sessions
+### 2026-11-14 — M4 L1 global base (status: in progress, branch `m4-l1-global`, draft PR #21)
+
+**Done so far:** D-002 decided (A), D-008 decided (conversion shift). `common/terrain.py` (contract #20), `layers/l1_global/{ingest,shift,tiles,layer,selftest}.py`, `rules.smk` (target `l1`), `pipelines/catalog.py`, parallel `publish_dir`, `.nosync` in work sync. Image **v0.4.0** published (`sha256:b22f66dba8dd2be30ad6c40784150745381f8c5194f375f4779f6a5df5ea0104`); in-image dem_geoid global self-test vs PDS areoid: mean -0.006 m, max 0.61 m. `pytest -q` 114 passed, ruff clean.
+**Pending:** global build — human runs `MSV_IMAGE_TAG=v0.4.0 MSV_INSTANCE_TYPES=m7i.2xlarge,m6i.2xlarge,m5.2xlarge MSV_VOLUME_GB=100 bash scripts/run_job.sh l1 global`; then acceptance commands, `docs/runs.md`, M4 → `review`.
+
 ### 2026-11-14 — M3 Pulumi storage + build_vm, smoke run (status: review, branch `m3-infra`)
 
 **What changed:**
