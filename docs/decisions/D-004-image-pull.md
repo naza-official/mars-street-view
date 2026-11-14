@@ -14,7 +14,9 @@ The image holds only open-source software (ISIS, ASP, GDAL, Snakemake, conda-for
 Option 1. The repo is public and the image holds no secrets, so being private only adds credentials to manage. Pick option 3 later if GHCR pull speed or rate limits hurt Spot start-up time.
 
 ## Decision
-2026-11-14 (human): option 1, make the GHCR package public. GitHub has no API for package visibility, so the human changes it in the package settings. Still private at the time of writing (anonymous manifest request for `v0.2.0` returns 404); check again before M3 user-data relies on it.
+2026-11-14 (human): option 1, make the GHCR package public. GitHub has no API for package visibility, so the human changes it in the package settings. Human set it public the same day. Verified: `DOCKER_CONFIG=<empty> docker manifest inspect ghcr.io/naza-official/mars-sv:v0.2.0` exits 0, and an anonymous registry request with `Accept: application/vnd.oci.image.manifest.v1+json` returns HTTP 200 for `v0.2.0` and `v0.1.0`.
+
+Correction: the "private" finding in Context came from a flawed check. The request sent only OCI-index and Docker-v2 Accept types, the image is an OCI manifest, and GHCR answers that with `MANIFEST_UNKNOWN` (HTTP 404). Whether the package was private before the change is unknown. The option-1 outcome stands either way.
 
 ## Date
 2026-11-14 (opened)
