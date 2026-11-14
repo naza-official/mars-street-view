@@ -9,10 +9,6 @@ BUCKET_NAME = f"mars-sv-{ACCOUNT_ID}"
 TAGS = {"project": "mars-sv", "milestone": "M3", "stack": "storage"}
 PUBLISHED_PREFIXES = ("orbital", "rover")
 READ_PREFIXES = ("orbital", "rover", "catalog")
-LANE_PREFIXES = {
-    "a": ("orbital", "catalog", "work"),
-    "b": ("rover", "catalog", "work"),
-}
 WORK_EXPIRY_DAYS = 14
 LOG_GROUP = "/msv/build"
 LOG_RETENTION_DAYS = 30
@@ -86,32 +82,6 @@ def cors(bucket: aws.s3.Bucket, origins: list[str]) -> None:
     )
 
 
-def lane_document(prefixes: tuple[str, ...]) -> dict:
-    return {
-        "Version": "2012-10-17",
-        "Statement": [
-            {"Sid": "List", "Effect": "Allow", "Action": "s3:ListBucket",
-             "Resource": f"arn:aws:s3:::{BUCKET_NAME}"},
-            {"Sid": "ReadAll", "Effect": "Allow", "Action": ["s3:GetObject"],
-             "Resource": f"arn:aws:s3:::{BUCKET_NAME}/*"},
-            {"Sid": "WriteLane", "Effect": "Allow",
-             "Action": ["s3:PutObject", "s3:AbortMultipartUpload"],
-             "Resource": object_arns(prefixes)},
-            {"Sid": "DeleteWork", "Effect": "Allow", "Action": ["s3:DeleteObject"],
-             "Resource": object_arns(("work",))},
-        ],
-    }
-
-
-def lane_policy(lane: str) -> aws.iam.Policy:
-    prefixes = LANE_PREFIXES[lane]
-    return aws.iam.Policy(
-        f"lane-{lane}-write", name=f"msv-lane-{lane}-write",
-        description=f"Mars SV lane {lane.upper()} writes: {', '.join(prefixes)}",
-        policy=json.dumps(lane_document(prefixes)), opts=opts,
-    )
-
-
 def cdn(bucket: aws.s3.Bucket) -> aws.cloudfront.Distribution:
     oac = aws.cloudfront.OriginAccessControl(
         "oac", name="msv-bucket-oac", origin_access_control_origin_type="s3",
@@ -174,13 +144,10 @@ aws.s3.BucketPolicy(
         lambda args: bucket_policy_document(*args)),
     opts=opts,
 )
-lanes = {lane: lane_policy(lane) for lane in LANE_PREFIXES}
 logs = log_group()
 
 pulumi.export("bucket", bucket.bucket)
 pulumi.export("bucket_arn", bucket.arn)
 pulumi.export("cdn_domain", distribution.domain_name)
 pulumi.export("cdn_id", distribution.id)
-pulumi.export("lane_a_policy_arn", lanes["a"].arn)
-pulumi.export("lane_b_policy_arn", lanes["b"].arn)
 pulumi.export("log_group", logs.name)

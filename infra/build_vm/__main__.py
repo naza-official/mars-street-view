@@ -1,5 +1,4 @@
 import base64
-import json
 
 import pulumi
 import pulumi_aws as aws
@@ -7,11 +6,9 @@ from job import Job, resolve, user_data
 
 ACCOUNT_ID = "123412369922"
 REGION = "us-west-2"
-BOUNDARY_ARN = f"arn:aws:iam::{ACCOUNT_ID}:policy/agent-boundary"
 AMI_PARAMETER = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
-USGS_BUCKETS = ("astrogeo-ard", "asc-pds-services", "asc-astropedia")
-SSM_CORE_ARN = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 STORAGE_STACK = "organization/msv-storage/main"
+IAM_STACK = "organization/msv-iam/main"
 TAGGED_RESOURCES = ("instance", "volume", "network-interface", "spot-instances-request")
 
 config = pulumi.Config()
@@ -26,44 +23,7 @@ provider = aws.Provider(
 opts = pulumi.ResourceOptions(provider=provider)
 invoke = pulumi.InvokeOptions(provider=provider)
 storage = pulumi.StackReference(STORAGE_STACK)
-
-
-def bucket_arns(names: tuple[str, ...]) -> list[str]:
-    return [arn for name in names for arn in (f"arn:aws:s3:::{name}", f"arn:aws:s3:::{name}/*")]
-
-
-def inline_policy(log_group: str) -> str:
-    return json.dumps({
-        "Version": "2012-10-17",
-        "Statement": [
-            {"Sid": "ReadParameters", "Effect": "Allow",
-             "Action": ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"],
-             "Resource": f"arn:aws:ssm:{REGION}:{ACCOUNT_ID}:parameter/msv/*"},
-            {"Sid": "ReadUsgs", "Effect": "Allow", "Action": ["s3:GetObject", "s3:ListBucket"],
-             "Resource": bucket_arns(USGS_BUCKETS)},
-            {"Sid": "WriteLogs", "Effect": "Allow",
-             "Action": ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"],
-             "Resource": f"arn:aws:logs:{REGION}:{ACCOUNT_ID}:log-group:{log_group}:*"},
-        ],
-    })
-
-
-def instance_profile() -> aws.iam.InstanceProfile:
-    role = aws.iam.Role(
-        "role", name="msv-build", permissions_boundary=BOUNDARY_ARN,
-        assume_role_policy=json.dumps({
-            "Version": "2012-10-17",
-            "Statement": [{"Effect": "Allow", "Action": "sts:AssumeRole",
-                           "Principal": {"Service": "ec2.amazonaws.com"}}],
-        }),
-        opts=opts,
-    )
-    aws.iam.RolePolicy("role-inline", role=role.id,
-                       policy=storage.require_output("log_group").apply(inline_policy), opts=opts)
-    aws.iam.RolePolicyAttachment("role-ssm", role=role.name, policy_arn=SSM_CORE_ARN, opts=opts)
-    aws.iam.RolePolicyAttachment("role-lane-a", role=role.name,
-                                 policy_arn=storage.require_output("lane_a_policy_arn"), opts=opts)
-    return aws.iam.InstanceProfile("profile", name="msv-build", role=role.name, opts=opts)
+iam = pulumi.StackReference(IAM_STACK)
 
 
 def security_group(vpc_id: str) -> aws.ec2.SecurityGroup:
@@ -76,8 +36,7 @@ def security_group(vpc_id: str) -> aws.ec2.SecurityGroup:
     )
 
 
-def launch_template(job: Job, profile: aws.iam.InstanceProfile,
-                    sg: aws.ec2.SecurityGroup) -> aws.ec2.LaunchTemplate:
+def launch_template(job: Job, sg: aws.ec2.SecurityGroup) -> aws.ec2.LaunchTemplate:
     ami = aws.ssm.get_parameter_output(name=AMI_PARAMETER, opts=invoke)
     script = pulumi.Output.all(storage.require_output("bucket"),
                                storage.require_output("log_group")).apply(
@@ -85,7 +44,7 @@ def launch_template(job: Job, profile: aws.iam.InstanceProfile,
     return aws.ec2.LaunchTemplate(
         "lt", name_prefix="msv-build-", image_id=ami.value, user_data=script,
         instance_initiated_shutdown_behavior="terminate",
-        iam_instance_profile={"arn": profile.arn},
+        iam_instance_profile={"arn": iam.require_output("build_instance_profile_arn")},
         metadata_options={"http_endpoint": "enabled", "http_tokens": "required",
                           "http_put_response_hop_limit": 2, "instance_metadata_tags": "enabled"},
         block_device_mappings=[{"device_name": "/dev/xvda", "ebs": {
@@ -124,7 +83,7 @@ subnets = aws.ec2.get_subnets_output(
              {"name": "default-for-az", "values": ["true"]}],
     opts=invoke,
 )
-build_fleet = fleet(job, launch_template(job, instance_profile(), security_group(vpc.id)),
+build_fleet = fleet(job, launch_template(job, security_group(vpc.id)),
                     subnets.ids)
 
 pulumi.export("run_id", job.run_id)
