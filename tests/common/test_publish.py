@@ -65,6 +65,13 @@ def test_publish_order_puts_layer_json_last(layer_dir: Path) -> None:
     assert "dtm.tif" in order
 
 
+def test_publish_order_skips_hidden_files(layer_dir: Path) -> None:
+    (layer_dir / ".snakemake_timestamp").write_text("")
+    (layer_dir / ".cache").mkdir()
+    (layer_dir / ".cache" / "x").write_text("x")
+    assert [p.name for p in storage.publish_order(layer_dir)] == ["dtm.tif", "layer.json"]
+
+
 def test_publish_order_requires_manifest(tmp_path: Path) -> None:
     (tmp_path / "x.tif").write_bytes(b"x")
     with pytest.raises(FileNotFoundError):

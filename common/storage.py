@@ -52,6 +52,12 @@ def gdal_env() -> dict[str, str]:
     return {"AWS_REGION": REGION}
 
 
+def rasterio_session() -> Any:
+    from rasterio.session import AWSSession
+
+    return AWSSession(boto3.Session(region_name=REGION))
+
+
 def list_keys(uri: ObjectUri) -> list[str]:
     paginator = client().get_paginator("list_objects_v2")
     prefix = uri.key.rstrip("/") + "/" if uri.key else ""
@@ -112,8 +118,12 @@ def put_new(path: Path, uri: ObjectUri) -> bool:
     return True
 
 
+def _hidden(path: Path, root: Path) -> bool:
+    return any(part.startswith(".") for part in path.relative_to(root).parts)
+
+
 def publish_order(root: Path) -> list[Path]:
-    files = sorted(p for p in root.rglob("*") if p.is_file())
+    files = sorted(p for p in root.rglob("*") if p.is_file() and not _hidden(p, root))
     manifest = root / LAYER_MANIFEST
     if manifest not in files:
         raise FileNotFoundError(f"{manifest} missing")

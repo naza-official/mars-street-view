@@ -107,7 +107,8 @@ def _check_values(src: rasterio.DatasetReader, report: Report) -> None:
 
 def validate_raster(path: str, env: dict[str, str] | None = None) -> Report:
     report = Report(path)
-    with rasterio.Env(**(env or {})), rasterio.open(path) as src:
+    session = storage.rasterio_session() if path.startswith("/vsis3/") else None
+    with rasterio.Env(session=session, **(env or {})), rasterio.open(path) as src:
         if _check_crs(src, report):
             _check_bounds(src, report)
         _check_structure(src, report)
