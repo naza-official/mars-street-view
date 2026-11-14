@@ -9,7 +9,7 @@ usage: scripts/run_job.sh <target> <site>
   -> check that no mars-sv instances or volumes are left.
   Needs a terminal: pulumi asks for confirmation and this script never passes --yes.
 env:
-  MSV_INSTANCE_TYPES  comma list, priority order (default: stack config / m7i.4xlarge,...)
+  MSV_INSTANCE_TYPES  comma list, tried in order, one pulumi up each (default m7i.4xlarge,m6i.4xlarge,r6i.2xlarge)
   MSV_VOLUME_GB       root gp3 size (default 500)
   MSV_IMAGE_TAG       image tag (default: stack config / job.py)
   MSV_TIMEOUT_MIN     give up polling after this many minutes (default 240)
@@ -68,13 +68,24 @@ teardown() {
 trap teardown EXIT
 
 instances_alive() {
-  local ids
-  ids="$(stack_output instance_ids --json | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)))')"
-  [[ -n "${ids}" ]] || return 1
-  local alive
-  alive="$(aws ec2 describe-instances --instance-ids ${ids} \
-    --query 'Reservations[].Instances[?State.Name!=`terminated`] | length(@[])' --output text 2>/dev/null || echo 0)"
-  [[ "${alive}" != 0 ]]
+  local id state
+  id="$(stack_output instance_id 2>/dev/null)" || return 1
+  state="$(aws ec2 describe-instances --instance-ids "${id}" \
+    --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null || echo unknown)"
+  [[ "${state}" != terminated && "${state}" != unknown ]]
+}
+
+launch() {
+  local kind
+  IFS=',' read -r -a kinds <<< "${MSV_INSTANCE_TYPES:-m7i.4xlarge,m6i.4xlarge,r6i.2xlarge}"
+  for kind in "${kinds[@]}"; do
+    say "pulumi up with ${kind} (confirm)"
+    if MSV_INSTANCE_TYPES="${kind}" pulumi_tty up; then
+      return 0
+    fi
+    say "up failed with ${kind}; next type keeps the stack and retries the instance"
+  done
+  return 1
 }
 
 poll_done() {
@@ -94,10 +105,8 @@ poll_done() {
 
 say "run ${RUN_ID}: target=${TARGET} site=${SITE}"
 UP_ATTEMPTED=1
-pulumi_tty up
-ids="$(stack_output instance_ids --json)"
-say "fleet $(stack_output fleet_id) instances ${ids} types $(stack_output instance_types --json | tr -d '\n ')"
-[[ "${ids}" != "[]" ]] || { say "fleet launched no instance (Spot capacity or quota)"; exit 1; }
+launch || { say "no instance type could be launched (Spot capacity, quota or permissions)"; exit 1; }
+say "instance $(stack_output instance_id) $(stack_output instance_type) in $(stack_output availability_zone)"
 
 DONE_URI="$(stack_output done_uri)"
 if poll_done "${DONE_URI}"; then

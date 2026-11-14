@@ -36,7 +36,8 @@ def security_group(vpc_id: str) -> aws.ec2.SecurityGroup:
     )
 
 
-def launch_template(job: Job, sg: aws.ec2.SecurityGroup) -> aws.ec2.LaunchTemplate:
+def launch_template(job: Job, sg: aws.ec2.SecurityGroup,
+                    subnet_id: pulumi.Input[str]) -> aws.ec2.LaunchTemplate:
     ami = aws.ssm.get_parameter_output(name=AMI_PARAMETER, opts=invoke)
     script = pulumi.Output.all(storage.require_output("bucket"),
                                storage.require_output("log_group")).apply(
@@ -51,32 +52,21 @@ def launch_template(job: Job, sg: aws.ec2.SecurityGroup) -> aws.ec2.LaunchTempla
             "volume_size": job.volume_gb, "volume_type": "gp3", "encrypted": "true",
             "delete_on_termination": "true"}}],
         network_interfaces=[{"device_index": 0, "associate_public_ip_address": "true",
-                             "security_groups": [sg.id], "delete_on_termination": "true"}],
+                             "subnet_id": subnet_id, "security_groups": [sg.id],
+                             "delete_on_termination": "true"}],
         tag_specifications=[{"resource_type": kind, "tags": {**tags, "Name": f"msv-{job.run_id}"}}
                             for kind in TAGGED_RESOURCES],
         opts=opts,
     )
 
 
-def fleet_overrides(instance_types: tuple[str, ...], subnet_ids: list[str]) -> list[dict]:
-    return [{"instance_type": kind, "subnet_id": subnet, "priority": float(rank)}
-            for rank, kind in enumerate(instance_types) for subnet in subnet_ids]
-
-
-def fleet(job: Job, template: aws.ec2.LaunchTemplate,
-          subnet_ids: pulumi.Output[list[str]]) -> aws.ec2.Fleet:
-    overrides = subnet_ids.apply(lambda ids: fleet_overrides(job.instance_types, ids))
-    return aws.ec2.Fleet(
-        "fleet", type="instant", terminate_instances=True,
-        launch_template_configs=[{
-            "launch_template_specification": {"launch_template_id": template.id,
-                                              "version": template.latest_version.apply(str)},
-            "overrides": overrides,
-        }],
-        target_capacity_specification={"default_target_capacity_type": "spot",
-                                       "total_target_capacity": 1},
-        spot_options={"allocation_strategy": "capacity-optimized-prioritized",
-                      "single_availability_zone": True},
+def spot_instance(job: Job, template: aws.ec2.LaunchTemplate) -> aws.ec2.Instance:
+    return aws.ec2.Instance(
+        "vm", instance_type=job.instance_types[0],
+        launch_template={"id": template.id, "version": template.latest_version.apply(str)},
+        instance_market_options={"market_type": "spot", "spot_options": {
+            "spot_instance_type": "one-time", "instance_interruption_behavior": "terminate"}},
+        tags={**tags, "Name": f"msv-{job.run_id}"},
         opts=opts,
     )
 
@@ -87,16 +77,15 @@ subnets = aws.ec2.get_subnets_output(
              {"name": "default-for-az", "values": ["true"]}],
     opts=invoke,
 )
-build_fleet = fleet(job, launch_template(job, security_group(vpc.id)),
-                    subnets.ids)
+subnet_id = subnets.ids.apply(lambda ids: sorted(ids)[0])
+vm = spot_instance(job, launch_template(job, security_group(vpc.id), subnet_id))
 
 pulumi.export("run_id", job.run_id)
 pulumi.export("target", job.target)
 pulumi.export("site", job.site)
 pulumi.export("image", job.image)
-pulumi.export("instance_types", list(job.instance_types))
+pulumi.export("instance_type", job.instance_types[0])
 pulumi.export("done_uri", storage.require_output("bucket").apply(
     lambda b: f"s3://{b}/work/{job.run_id}/DONE"))
-pulumi.export("fleet_id", build_fleet.id)
-pulumi.export("instance_ids", build_fleet.fleet_instance_sets.apply(
-    lambda sets: [i for s in (sets or []) for i in (s.instance_ids or [])]))
+pulumi.export("instance_id", vm.id)
+pulumi.export("availability_zone", vm.availability_zone)
