@@ -63,7 +63,7 @@ Coordinate with Person B: open a `contract` issue linking the PR.
 - **Spike:** try 2 to 3 approaches on a 512x512 MOLA crop: `py3dtiles` or a similar library, a custom glTF mesher (grid to triangles in Mars-fixed XYZ with a tile-local origin), and any tiler that accepts a custom ellipsoid. Measure correctness (heights on the sphere), tile count and size, and whether 3DTilesRendererJS loads them. Write `docs/decisions/D-002-terrain-tiler.md` with a recommendation; the human decides.
 
 ## M2 Container image
-- `docker/Dockerfile` from `condaforge/miniforge3`: `isis` from channel `usgs-astrogeology`, ASP release tarball (pin version), GDAL, the chosen tiler, the `common` package, Snakemake.
+- `docker/Dockerfile` from `condaforge/miniforge3`: `isis` from channel `usgs-astrogeology` only with build arg `WITH_ISIS=1` (default off, D-005), ASP release tarball (pin version), GDAL, the chosen tiler, the `common` package, Snakemake.
 - `docker/entrypoint.sh`: runs `snakemake --cores all <target>` with config from env, then syncs outputs.
 - GitHub Actions workflow builds on tag `v*` and pushes to GHCR.
 - Do not bake ISIS data areas into the image; download only the kernels needed at runtime, if any.

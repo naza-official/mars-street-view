@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -d /opt/conda/envs/isis ]]; then
+  export ISISROOT=/opt/conda/envs/isis ISISDATA="${ISISDATA:-/isisdata}"
+fi
+
 usage() {
   cat <<'TXT'
 mars-sv image
   run <target>   snakemake --cores all <target>, then sync /work/<run_id> to s3://$MSV_BUCKET/work/<run_id>/
                  env: MSV_SITE (required), MSV_RUN_ID (default: UTC timestamp), MSV_BUCKET, MSV_SYNC (1/0)
   <command...>   run any command in the image (python, pc_align, dem_geoid, snakemake, ...)
+  ISIS apps exist only in images built with WITH_ISIS=1 (tag suffix -isis): /opt/conda/envs/isis/bin
 TXT
 }
 

@@ -72,6 +72,19 @@ CI: PR #10 `ci` success (43608466756), `image` build+smoke success (43608466744,
 - `run <target>` sync path tested with `MSV_SYNC=0` only; the S3 upload is unit-tested with a mock. First real use is the M3 smoke run.
 - No cloud resources used this session; nothing to log in `docs/runs.md`.
 
+**Follow-up (same session): ISIS optional (D-005, decided by human).**
+- `docker/Dockerfile`: build arg `WITH_ISIS` (default `0`); ISIS layer moved after ASP and msv so both variants share them. The entrypoint sets `ISISROOT`/`ISISDATA` only when `/opt/conda/envs/isis` exists (ASP wrappers set their own `ISISROOT`).
+- `image` workflow: `v*` tags build the default image; `workflow_dispatch` with `with_isis=true` builds `<ref>-isis`.
+- Local builds:
+```
+mars-sv:slim (default)    3,897,726,003 bytes   ISISROOT=unset              envs: msv
+mars-sv:isis (WITH_ISIS=1) 8,972,893,630 bytes  ISISROOT=/opt/conda/envs/isis  envs: isis msv
+both: common.validate --help, pc_align --help, snakemake --version, dem_geoid --help -> exit 0
+isis: cam2map -help -> exit 0
+slim: check_dem_geoid.py -> {"n": 500, "mean_m": 0.0238, "max_abs_m": 0.8413}; run all -> 1 of 1 steps done
+```
+- `ghcr.io/naza-official/mars-sv:v0.1.0` still has ISIS. The slim image needs a new tag (`v0.2.0`), then the acceptance commands re-run against it.
+
 **Next step:** human reviews PR #10, decides D-004, sets M2 `done`. Then M3 (Pulumi storage + build_vm stacks, smoke run) with image `v0.1.0`.
 
 ### 2026-11-14 — M1 follow-up: M1 done, storage R2 → S3

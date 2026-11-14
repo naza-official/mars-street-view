@@ -10,12 +10,6 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends bzip2 ca-certificates curl libice6 libsm6 libx11-6 libxau6 libxext6 \
  && rm -rf /var/lib/apt/lists/*
 
-COPY docker/env-isis.yml /tmp/env-isis.yml
-RUN mamba env create -f /tmp/env-isis.yml \
- && mamba clean -afy \
- && rm -rf /opt/conda/envs/isis/share/doc /opt/conda/envs/isis/doc /opt/conda/envs/isis/include \
- && find /opt/conda/envs/isis -name '*.a' -delete
-
 ENV ASP_DIR=/opt/asp
 RUN name="StereoPipeline-${ASP_VERSION}-${ASP_DATE}-x86_64-Linux" \
  && curl -fsSL -o /tmp/asp.tar.bz2 \
@@ -28,6 +22,15 @@ RUN name="StereoPipeline-${ASP_VERSION}-${ASP_DATE}-x86_64-Linux" \
 COPY docker/env-msv.yml /tmp/env-msv.yml
 RUN mamba env create -f /tmp/env-msv.yml && mamba clean -afy
 
+ARG WITH_ISIS=0
+COPY docker/env-isis.yml /tmp/env-isis.yml
+RUN if [ "${WITH_ISIS}" = "1" ]; then \
+      mamba env create -f /tmp/env-isis.yml \
+      && mamba clean -afy \
+      && rm -rf /opt/conda/envs/isis/share/doc /opt/conda/envs/isis/doc /opt/conda/envs/isis/include \
+      && find /opt/conda/envs/isis -name '*.a' -delete; \
+    fi
+
 WORKDIR /opt/msv
 COPY pyproject.toml ./
 COPY common ./common
@@ -36,8 +39,6 @@ COPY configs ./configs
 RUN /opt/conda/envs/msv/bin/pip install --no-cache-dir ".[tiler]"
 
 ENV PATH=/opt/conda/envs/msv/bin:/opt/conda/bin:${ASP_DIR}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    ISISROOT=/opt/conda/envs/isis \
-    ISISDATA=/isisdata \
     MSV_WORK=/work \
     MSV_BUCKET=mars-sv-123412369922 \
     AWS_REGION=us-west-2
