@@ -10,7 +10,7 @@ Newest session first. Each entry: date, milestone, what changed, evidence (comma
 | D-003 | One R2 bucket with prefixes vs two buckets | open, default one bucket |
 
 ## Sessions
-### 2026-11-14 — M0 Repo bootstrap (status: in_progress, waiting on push + CI)
+### 2026-11-14 — M0 Repo bootstrap (status: review, PR #1)
 
 **Environment setup (before M0):**
 - Moved harness docs into `docs/`; replaced `<owner>` with `naza-official` in `docs/contracts.md`, `docs/plan-person-a.md`, `docs/milestones.json` (README_HARNESS step 2, placeholder fill, no contract change).
@@ -18,7 +18,7 @@ Newest session first. Each entry: date, milestone, what changed, evidence (comma
 - Bootstrapped cloud (human approved): S3 bucket `mars-sv-pulumi-state-123412369922` (us-west-2, versioned, public access blocked, SSE-S3, tag `project=mars-sv`); KMS key `bb0ceb01-c422-4f36-8798-51562af39590` with alias `alias/pulumi` (~$1/month).
 - Pulumi login URL: `s3://mars-sv-pulumi-state-123412369922?region=us-west-2&awssdk=v2&profile=claude-agent` (region/profile in URL so plain `pulumi whoami` works).
 - `scripts/init.sh` → `init ok` (run by human; agent permission denied for that script).
-- Harness committed locally on `main` as `4f82daf`; **not pushed yet**.
+- Harness committed on `main` as `4f82daf` and pushed (human approved).
 
 **What changed (branch `m0-repo-bootstrap`):**
 - Layout: `common/`, `layers/{l1_global,l2_regional,l5_thermal}/`, `viewer/`, `pipelines/Snakefile`, `infra/{storage,build_vm}/`, `configs/sites/jezero.yaml`, `tests/fixtures/`.
@@ -37,12 +37,11 @@ $ pytest -q
 $ test -f configs/sites/jezero.yaml
 exit 0
 $ gh run list --limit 1
-(pending: needs push of main + branch and a PR)
+completed	success	M0: repo bootstrap	ci	m0-repo-bootstrap	pull_request	43602435295	25s	2026-11-14T13:58:41Z
 ```
 
 **Open problems:**
-- Push of `main` was blocked by the agent permission classifier; human must push or approve.
 - `pipelines/Snakefile` not dry-run checked locally (snakemake not in `.venv`).
 - `.claude/hooks/guard.sh` and `.claude/commands/*` from README_HARNESS are missing in the repo.
 
-**Next step:** push `main` and `m0-repo-bootstrap`, open PR, paste `gh run list --limit 1` output here, set M0 to `review`.
+**Next step:** human reviews PR https://github.com/naza-official/mars-street-view/pull/1, merges, sets M0 `done`. Then M1 (L0 common library + terrain-tiler spike).
