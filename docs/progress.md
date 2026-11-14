@@ -69,6 +69,7 @@ All checks passed!
 $ pytest -q
 58 passed in 0.49s
 ```
+CI on PR #7 (https://github.com/naza-official/mars-street-view/pull/7): `lint-test pass` on both the push and pull_request runs (43605752367, 43605773622).
 
 **Open problems:**
 - `dem_geoid` wrapper untested against real ASP (M2).
