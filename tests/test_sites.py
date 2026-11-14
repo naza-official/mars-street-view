@@ -21,3 +21,11 @@ def test_jezero_local_crs_on_mars_sphere() -> None:
     assert crs["projection"] == "eqc"
     assert crs["radius_m"] == 3396190
     assert "+R=3396190" in crs["proj4"]
+
+
+def test_jezero_local_crs_centred_on_site() -> None:
+    site = load_site("jezero")
+    lon, lat = site.centre_lonlat
+    assert site.local_crs["lon_0"] == lon
+    assert site.local_crs["lat_0"] == lat
+    assert f"+lat_0={lat}" in site.local_crs["proj4"]
