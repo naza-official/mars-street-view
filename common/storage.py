@@ -1,3 +1,5 @@
+import hashlib
+import re
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -5,6 +7,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import boto3
+from botocore.exceptions import ClientError
 
 DEFAULT_BUCKET = "mars-sv-123412369922"
 REGION = "us-west-2"
@@ -62,3 +65,70 @@ def read_bytes(uri: ObjectUri) -> bytes:
 
 def upload_file(path: Path, uri: ObjectUri) -> None:
     client().upload_file(str(path), uri.bucket, uri.key)
+
+
+MAX_SINGLE_PUT_BYTES = 5 * 1024**3
+SHA256_META = "sha256"
+LAYER_MANIFEST = "layer.json"
+PUBLISHED_PREFIX = re.compile(r"^(orbital|rover)/[a-z0-9_]+/[a-z0-9_]+/v[1-9][0-9]*/$")
+
+
+class AlreadyPublished(RuntimeError):
+    pass
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _existing_sha256(uri: ObjectUri) -> str | None:
+    head = client().head_object(Bucket=uri.bucket, Key=uri.key)
+    return head.get("Metadata", {}).get(SHA256_META)
+
+
+def _is_precondition_failure(error: ClientError) -> bool:
+    return error.response.get("Error", {}).get("Code") in {"PreconditionFailed", "412"}
+
+
+def put_new(path: Path, uri: ObjectUri) -> bool:
+    size = path.stat().st_size
+    if size > MAX_SINGLE_PUT_BYTES:
+        raise ValueError(f"{path} is {size} bytes; single PUT limit is {MAX_SINGLE_PUT_BYTES}")
+    digest = sha256_file(path)
+    try:
+        with path.open("rb") as body:
+            client().put_object(Bucket=uri.bucket, Key=uri.key, Body=body, IfNoneMatch="*",
+                                Metadata={SHA256_META: digest})
+    except ClientError as error:
+        if not _is_precondition_failure(error):
+            raise
+        if _existing_sha256(uri) != digest:
+            raise AlreadyPublished(f"{uri.uri} exists with different content") from error
+        return False
+    return True
+
+
+def publish_order(root: Path) -> list[Path]:
+    files = sorted(p for p in root.rglob("*") if p.is_file())
+    manifest = root / LAYER_MANIFEST
+    if manifest not in files:
+        raise FileNotFoundError(f"{manifest} missing")
+    return [p for p in files if p != manifest] + [manifest]
+
+
+def check_published_prefix(dest: ObjectUri) -> None:
+    if not PUBLISHED_PREFIX.match(dest.key):
+        raise ValueError(f"not a published layer prefix (<lane>/<layer>/<site>/vN/): {dest.uri}")
+
+
+def publish_dir(root: Path, dest: ObjectUri) -> list[tuple[ObjectUri, bool]]:
+    check_published_prefix(dest)
+    results = []
+    for path in publish_order(root):
+        uri = dest.child(path.relative_to(root).as_posix())
+        results.append((uri, put_new(path, uri)))
+    return results
