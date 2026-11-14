@@ -8,7 +8,7 @@ Newest session first. Each entry: date, milestone, what changed, evidence (comma
 | D-001 | CRS code written in layer.json (proposed IAU_2015:49900) | open, issue #2, `docs/decisions/D-001-crs-code.md`, rec: keep 49900 as body+datum code |
 | D-002 | Terrain tiler for a Mars sphere | open, issue #5, `docs/decisions/D-002-terrain-tiler.md`, rec: A (own mesher → 3D Tiles 1.1 GLB) |
 | D-003 | One R2 bucket with prefixes vs two buckets | **decided 2026-11-14 by human: no R2; one AWS S3 bucket `mars-sv-123412369922` (us-west-2)**, issue #3 |
-| D-004 | How the build VM pulls the GHCR image | **decided 2026-11-14 by human: make package public** (pending UI change), issue #12 |
+| D-004 | How the build VM pulls the GHCR image | **decided 2026-11-14 by human: package public, verified anonymous pull**, issue #12 |
 | D-005 | ISIS in the build image | **decided 2026-11-14 by human: optional, `WITH_ISIS=0` default**, `docs/decisions/D-005-isis-optional.md` |
 
 ## Sessions
@@ -22,7 +22,9 @@ anonymous manifest v0.2.0 HTTP 404
 ```
 - Follow-up PR merged on the human's instruction without waiting for checks.
 
-Next step: confirm the package is public (anonymous manifest request returns 200), then M3 (Pulumi storage + build_vm, smoke run) with image `v0.2.0`.
+Update: human set the package public. Anonymous pull verified (empty `DOCKER_CONFIG`, `docker manifest inspect ...:v0.2.0` exit 0; registry request with `Accept: application/vnd.oci.image.manifest.v1+json` returns HTTP 200 for v0.2.0 and v0.1.0). **Correction:** the earlier 404 "private" checks (here and in the M2 entry) sent the wrong Accept header; GHCR returns `MANIFEST_UNKNOWN` (404) for an OCI manifest without `application/vnd.oci.image.manifest.v1+json`. For anonymous checks use `docker manifest inspect` with an empty `DOCKER_CONFIG`.
+
+Next step: M3 (Pulumi storage + build_vm, smoke run) with image `v0.2.0`.
 
 ### 2026-11-14 — M2 Container image on GHCR (status: review, PR #10)
 
