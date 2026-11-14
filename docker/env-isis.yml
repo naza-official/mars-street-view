@@ -1,0 +1,6 @@
+name: isis
+channels:
+  - usgs-astrogeology
+  - conda-forge
+dependencies:
+  - isis=10.0.0
