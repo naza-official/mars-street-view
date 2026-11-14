@@ -1,0 +1,17 @@
+{
+  "layer": "l2_regional",
+  "site": "jezero",
+  "version": "v1",
+  "schema": "1.0",
+  "owner": "A",
+  "crs": "IAU_2015:49900",
+  "datum": "sphere_3396190",
+  "bounds_lonlat": [77.2, 18.2, 77.7, 18.7],
+  "resolution_m": 1.0,
+  "assets": {"dtm": "dtm.tif", "ortho": "ortho.tif", "tileset": "tileset.json"},
+  "depends_on": ["orbital/l1_global/global/v1"],
+  "sources": [{"url": "https://...", "fetched": "2026-11-20", "license": "public domain"}],
+  "validated": true,
+  "built_with": "ghcr.io/naza-official/mars-sv:0.3.1",
+  "notes": ""
+}
