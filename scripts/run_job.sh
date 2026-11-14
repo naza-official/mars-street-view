@@ -32,14 +32,14 @@ export AWS_PROFILE="${AWS_PROFILE:-claude-agent}" AWS_REGION=us-west-2
 export MSV_TARGET="${TARGET}" MSV_SITE="${SITE}" MSV_RUN_ID="${RUN_ID}"
 mkdir -p "${REPO}/logs"
 LOG="${REPO}/logs/run_job-${RUN_ID}.log"
-exec > >(tee -a "${LOG}") 2>&1
 
 STARTED_EPOCH="$(date +%s)"
 UP_ATTEMPTED=0
 RESULT=1
 
-say() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*"; }
+say() { printf '[%s] %s\n' "$(date -u +%H:%M:%S)" "$*" | tee -a "${LOG}"; }
 stack_output() { pulumi -C "${REPO}/infra/build_vm" stack output --stack "${STACK}" "$@"; }
+pulumi_tty() { pulumi -C "${REPO}/infra/build_vm" "$@" --stack "${STACK}" </dev/tty >/dev/tty 2>&1; }
 
 count_left() {
   local instances volumes
@@ -55,13 +55,13 @@ count_left() {
 teardown() {
   [[ "${UP_ATTEMPTED}" == 1 ]] || return 0
   say "pulumi destroy (confirm to tear down ${RUN_ID})"
-  pulumi -C "${REPO}/infra/build_vm" destroy --stack "${STACK}" || say "WARNING: destroy failed or declined"
+  pulumi_tty destroy || say "WARNING: destroy failed or declined"
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     count_left && break
     sleep 30
   done
   local hours
-  hours="$(awk -v s="$(( $(date +%s) - STARTED_EPOCH ))" 'BEGIN { printf "%.2f", s / 3600 }')"
+  hours="$(LC_ALL=C awk -v s="$(( $(date +%s) - STARTED_EPOCH ))" 'BEGIN { printf "%.2f", s / 3600 }')"
   say "wall time ${hours} h; add a docs/runs.md row (run_id ${RUN_ID})"
   say "log: ${LOG}"
 }
@@ -94,17 +94,17 @@ poll_done() {
 
 say "run ${RUN_ID}: target=${TARGET} site=${SITE}"
 UP_ATTEMPTED=1
-pulumi -C "${REPO}/infra/build_vm" up --stack "${STACK}"
+pulumi_tty up
 ids="$(stack_output instance_ids --json)"
 say "fleet $(stack_output fleet_id) instances ${ids} types $(stack_output instance_types --json | tr -d '\n ')"
 [[ "${ids}" != "[]" ]] || { say "fleet launched no instance (Spot capacity or quota)"; exit 1; }
 
 DONE_URI="$(stack_output done_uri)"
 if poll_done "${DONE_URI}"; then
-  cat "${REPO}/logs/DONE-${RUN_ID}.json"
+  tee -a "${LOG}" < "${REPO}/logs/DONE-${RUN_ID}.json"
   status="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "${REPO}/logs/DONE-${RUN_ID}.json")"
   [[ "${status}" == 0 ]] && RESULT=0
   say "target ${TARGET} finished with status ${status}"
 fi
-aws logs tail /msv/build --log-stream-names "${RUN_ID}" --since 1d 2>/dev/null | tail -40 || true
+aws logs tail /msv/build --log-stream-names "${RUN_ID}" --since 1d 2>/dev/null | tail -40 | tee -a "${LOG}" || true
 exit "${RESULT}"
