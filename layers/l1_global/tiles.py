@@ -311,6 +311,11 @@ def build(dtm: Path, out: Path, ortho: Path | None, root: TileKey | None, worker
     return stats
 
 
+def configure(leaf_level: int, texture_px: int, split_level: int) -> None:
+    global LEAF_LEVEL, TEXTURE_PX, SPLIT_LEVEL
+    LEAF_LEVEL, TEXTURE_PX, SPLIT_LEVEL = leaf_level, texture_px, split_level
+
+
 def parse_key(text: str | None) -> TileKey | None:
     return None if text is None else TileKey(*map(int, text.split("/")))
 
@@ -323,7 +328,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", help="level/row/col of a subtree (dtm must cover it exactly)")
     parser.add_argument("--leaf-error", type=float, default=LEAF_MAX_ERROR_M)
     parser.add_argument("--workers", type=int, default=os.cpu_count() or 1)
+    parser.add_argument("--leaf-level", type=int, default=LEAF_LEVEL)
+    parser.add_argument("--texture-px", type=int, default=TEXTURE_PX)
+    parser.add_argument("--split-level", type=int, default=SPLIT_LEVEL)
     args = parser.parse_args(argv)
+    configure(args.leaf_level, args.texture_px, args.split_level)
     stats = build(args.dtm, args.out, args.ortho, parse_key(args.root), args.workers,
                   args.leaf_error)
     print(json.dumps(stats, indent=1))

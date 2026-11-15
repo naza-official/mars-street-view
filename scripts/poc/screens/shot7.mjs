@@ -1,0 +1,18 @@
+import { chromium } from "playwright-core";
+const [url, outDir] = process.argv.slice(2);
+const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--use-angle=metal", "--ignore-gpu-blocklist"] });
+const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+const logs = [];
+page.on("pageerror", (e) => logs.push(`pageerror: ${e.message}`));
+await page.goto(url);
+await page.waitForSelector(".route-legend", { timeout: 30000 });
+await page.waitForTimeout(2000);
+const go = (a) => page.evaluate(([lat, lon, h, az, el]) => window.mars.placeCamera({ lat, lon, height: h }, az, el), a);
+const settle = async (a, name) => { await go(a); await page.waitForTimeout(14000); await go(a); await page.waitForTimeout(1500); await page.screenshot({ path: `${outDir}/${name}.png` }); };
+await settle([18.4475, 77.4363, -4250 + 4200, 0, -90], "19_classmap_top");
+await settle([18.405, 77.4363, -4250 + 2600, 0, -38], "20_classmap_oblique");
+await page.uncheck(".legend-toggle input");
+await page.waitForTimeout(1500);
+await page.screenshot({ path: `${outDir}/21_classmap_off.png` });
+console.log(logs.join("\n") || "no page errors");
+await browser.close();

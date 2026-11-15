@@ -1,0 +1,66 @@
+name: viewer
+
+on:
+  push:
+    branches: [main]
+    paths: ["viewer/**", ".github/workflows/viewer.yml"]
+  pull_request:
+    paths: ["viewer/**", ".github/workflows/viewer.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BUCKET: mars-sv-123412369922
+  ROLE_ARN: arn:aws:iam::123412369922:role/msv-viewer-deploy
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: viewer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: viewer/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: viewer-dist
+          path: viewer/dist
+          retention-days: 7
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    concurrency: viewer-deploy
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: viewer-dist
+          path: dist
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: us-west-2
+      - name: Upload hashed assets (immutable)
+        run: >
+          aws s3 sync dist/assets "s3://$BUCKET/viewer/assets"
+          --cache-control "public, max-age=31536000, immutable"
+      - name: Upload entry files (no-cache)
+        run: >
+          aws s3 sync dist "s3://$BUCKET/viewer" --exclude "assets/*"
+          --cache-control "no-cache"
+      - name: Remove stale files
+        run: aws s3 sync dist "s3://$BUCKET/viewer" --delete --size-only

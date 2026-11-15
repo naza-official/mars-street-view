@@ -74,7 +74,7 @@
     {
       "id": "M4",
       "title": "L1 global base",
-      "status": "review",
+      "status": "done",
       "depends_on": [
         "M3"
       ],
