@@ -1,10 +1,13 @@
 import {
   BufferGeometry, DoubleSide, Float32BufferAttribute, Group, Line, LineBasicMaterial, Mesh,
-  CatmullRomCurve3, Color, InstancedMesh, MeshBasicMaterial, Object3D, PlaneGeometry, Shape,
+  CanvasTexture, CatmullRomCurve3, Color, Sprite, SpriteMaterial, InstancedMesh, MeshBasicMaterial, Object3D, PlaneGeometry, Shape,
   Material, NearestFilter, SRGBColorSpace, ShapeGeometry, TextureLoader, TubeGeometry,
   SphereGeometry, Matrix4, PerspectiveCamera, Raycaster, Scene, Vector2, Vector3, WebGLRenderer,
 } from "three";
 import { CAMERA_FRAME, Ellipsoid, GlobeControls, TilesRenderer } from "3d-tiles-renderer";
+import { Line2 } from "three/examples/jsm/lines/Line2.js";
+import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
+import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { Cartographic, MARS_RADIUS_M, toDeg, toRad } from "./geo";
 import { flightDuration, flightPoint } from "./flight";
 import { TraversePoint } from "./traverse";
@@ -30,6 +33,7 @@ export interface FirstPerson {
 const GROUND_PROBE_M = 500;
 const ROUTE_LIFT_M = 0.6;
 const CELL_LIFT_M = 1.5;
+const PLAN_COLOUR = 0x39ff9c;
 
 function enuPoint(origin: Cartographic, p: RoutePoint, lift: number): Vector3 {
   const { north, east } = localOffset(origin, { lat: p[1], lon: p[0], height: p[2] });
@@ -54,6 +58,45 @@ function classMapGeometry(data: ClassMapData, origin: Cartographic): BufferGeome
   return g;
 }
 
+function pinTexture(colour: string): CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
+  ctx.fillStyle = colour;
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.arc(32, 32, 24, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  return new CanvasTexture(canvas);
+}
+
+function markerMesh(at: Vector3, isStart: boolean): Sprite {
+  const sprite = new Sprite(new SpriteMaterial({
+    map: pinTexture(isStart ? "#2ee66b" : "#ff4d4d"), depthTest: false, sizeAttenuation: false,
+  }));
+  sprite.position.copy(at).add(new Vector3(0, 0, 3));
+  sprite.scale.setScalar(0.028);
+  sprite.renderOrder = 15;
+  return sprite;
+}
+
+function planLine(points: RoutePoint[], origin: Cartographic): Line2 {
+  const geometry = new LineGeometry();
+  geometry.setPositions(points.flatMap((p) => enuPoint(origin, p, ROUTE_LIFT_M + 1).toArray()));
+  const material = new LineMaterial({
+    color: PLAN_COLOUR, linewidth: 4, depthTest: false, transparent: true,
+    resolution: new Vector2(window.innerWidth, window.innerHeight),
+  });
+  window.addEventListener("resize", () => material.resolution.set(window.innerWidth, window.innerHeight));
+  const line = new Line2(geometry, material);
+  line.computeLineDistances();
+  line.renderOrder = 14;
+  line.frustumCulled = false;
+  return line;
+}
+
 function routeCells(data: RouteData, origin: Cartographic): InstancedMesh {
   const plane = new PlaneGeometry(data.cell_m, data.cell_m);
   const material = new MeshBasicMaterial({
@@ -72,11 +115,11 @@ function routeCells(data: RouteData, origin: Cartographic): InstancedMesh {
   return mesh;
 }
 
-function routeTube(data: RouteData, origin: Cartographic): Mesh {
+function routeTube(data: RouteData, origin: Cartographic, colour = 0xffffff): Mesh {
   const pts = data.route.map((p) => enuPoint(origin, p, ROUTE_LIFT_M + 0.8));
   const path = new CatmullRomCurve3(pts, false, "catmullrom", 0.1);
   const geometry = new TubeGeometry(path, Math.max(64, pts.length * 4), 1.2, 6, false);
-  const mesh = new Mesh(geometry, new MeshBasicMaterial({ color: 0xffffff }));
+  const mesh = new Mesh(geometry, new MeshBasicMaterial({ color: colour }));
   mesh.frustumCulled = false;
   mesh.renderOrder = 12;
   mesh.userData.kind = "route";
@@ -132,6 +175,7 @@ export class MarsScene {
   private readonly overlays: Object3D[] = [];
   private readonly routeGroups: Group[] = [];
   private classesWanted = true;
+  private plan: Group | null = null;
   private stops: StopPoint[] = [];
   private move: MoveInput = { forward: 0, right: 0, run: false };
   private readonly frame = new Matrix4();
@@ -220,6 +264,32 @@ export class MarsScene {
     this.scene.add(group);
     this.routeGroups.push(group);
     return group;
+  }
+
+  showPlan(points: RoutePoint[], markers: RoutePoint[]): void {
+    this.clearPlan();
+    const anchor = points[0] ?? markers[0];
+    if (!anchor) return;
+    const origin = { lon: anchor[0], lat: anchor[1], height: anchor[2] };
+    const group = new Group();
+    group.matrixAutoUpdate = false;
+    group.matrix.copy(this.enuFrame(origin));
+    if (points.length > 1) {
+      const data = { name: "plan", legend: {}, cell_m: 4, route: points, cells: [] };
+      group.add(routeTube(data, origin, PLAN_COLOUR), planLine(points, origin));
+    }
+    markers.forEach((m, i) => group.add(markerMesh(enuPoint(origin, m, 0), i === 0)));
+    this.scene.add(group);
+    this.routeGroups.push(group);
+    this.plan = group;
+    this.applyClassVisibility();
+  }
+
+  clearPlan(): void {
+    if (!this.plan) return;
+    this.scene.remove(this.plan);
+    this.routeGroups.splice(this.routeGroups.indexOf(this.plan), 1);
+    this.plan = null;
   }
 
   setClassesVisible(visible: boolean): void {

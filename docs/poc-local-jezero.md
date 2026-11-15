@@ -174,3 +174,23 @@ area shares: soil 24.5 %, bedrock 3.2 %, sand 36.2 %, big rock 8.9 %, unknown 27
   - The classes follow real features: sand floors in small craters, big rock on crater rims and on the isolated hill (west), the Séítah ridges/ripple field (centre).
   - 256 m tile seams are visible, because tokens are centred per tile and neighbouring tiles are classified independently (B's known limit).
   - 27 % unknown away from the five areas in the database.
+
+## Phase 9: path finding in the viewer (2026-11-15)
+- **What:** pick any two points inside the classified square and get the least-cost rover route, computed in the browser with no backend. This works on a static site too.
+- **Data:** `scripts/poc/costgrid_to_viewer.py` → `rover/l9_routes/jezero/v1/area_grid.{json,bin}`. 896 × 768 cells of 4 m, 2.6 MB: class u8, slope u8 (deg × 4) from the site DTM averaged onto the class grid, height u16 ((m + 10000) × 10). The JSON has the grid origin, the eqc site projection and B's cost table. 0.9 % of cells are blocked (slope > 25° or no data).
+- **Cost model = B's `corridor.py`:**
+  - cell cost = class cost (soil 1, bedrock 1.5, sand 3, big rock 8, unknown 2.5) × (1 + (slope/10°)²);
+  - blocked above 25°;
+  - 8-connected, step = mean of the two cell costs × step length (as `skimage.graph.route_through_array(..., geometric=True)`).
+  - Search: A* with an admissible heuristic (min class cost × straight distance). No corridor-width limit: the whole square is open.
+- **Viewer** (`src/pathfind.ts`, `src/planner.ts`):
+  - "Plan route" button; click a start, then an end (green/red pins). The route is drawn as a 4 px screen-space line plus a ground tube.
+  - The panel shows length, straight distance, detour %, class shares along the route and A* time. Clicking again starts a new route.
+  - The panel is capped at 440 px wide: it had grown to 1,128 px and was swallowing map clicks.
+- **Checks:**
+```
+npm test → 36 passed (projection round trip, B's cost values, detour around big rock, a 40° wall → no route, straight line on uniform soil)
+B's demo endpoints via planner.planBetween: Route 1.05 km (straight 0.82 km, +29%) · soil 77%, bedrock 6%, sand 8%, unknown 9% · A* 26 ms   (= B's Python corridor.py: 1051 m, 77/6/8/9 %)
+two map clicks: Route 3.10 km (straight 2.61 km, +19%) · soil 68%, bedrock 9%, sand 8%, unknown 14% · A* 159 ms
+```
+- **Screenshots:** `docs/poc/22_plan_top.png`, `23_plan_oblique.png`.

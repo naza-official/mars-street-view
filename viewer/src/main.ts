@@ -6,6 +6,7 @@ import { SITES, Site, formatCartographic } from "./geo";
 import { MarsScene } from "./scene";
 import { parsePosesCsv } from "./traverse";
 import { StreetView, loadStops } from "./street";
+import { RoutePlanner, costGridAssets, loadCostGrid } from "./planner";
 import { fetchFresh } from "./catalog";
 import { ClassMapData, RouteData, classMapAssets, routeAssets, routeLength } from "./route";
 import { MARS_RADIUS_M } from "./geo";
@@ -85,6 +86,10 @@ async function addRoutes(mars: MarsScene, layer: ResolvedLayer, panel: HTMLEleme
   for (const asset of maps) {
     const res = await fetchFresh(`${layer.baseUrl}${asset}`);
     if (res.ok) await mars.addClassMap((await res.json()) as ClassMapData, layer.baseUrl);
+  }
+  for (const asset of costGridAssets(layer.layer.assets)) {
+    const grid = await loadCostGrid(layer.baseUrl, asset);
+    if (grid) Object.assign(window, { planner: new RoutePlanner(mars, grid, panel) });
   }
   for (const asset of routeAssets(layer.layer.assets)) {
     const res = await fetchFresh(`${layer.baseUrl}${asset}`);
