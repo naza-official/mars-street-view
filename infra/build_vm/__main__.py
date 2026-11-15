@@ -9,7 +9,8 @@ REGION = "us-west-2"
 AMI_PARAMETER = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 STORAGE_STACK = "organization/msv-storage/main"
 IAM_STACK = "organization/msv-iam/main"
-TAGGED_RESOURCES = ("instance", "volume", "network-interface", "spot-instances-request")
+TAGGED_RESOURCES = ("instance", "volume", "network-interface")
+SPOT_TAGGED = ("spot-instances-request",)
 
 config = pulumi.Config()
 job = resolve({key: config.get(key) for key in
@@ -37,6 +38,10 @@ def security_group(vpc_id: str) -> aws.ec2.SecurityGroup:
     )
 
 
+def tagged_kinds(job: Job) -> tuple[str, ...]:
+    return TAGGED_RESOURCES + (SPOT_TAGGED if job.market == "spot" else ())
+
+
 def launch_template(job: Job, sg: aws.ec2.SecurityGroup,
                     subnet_id: pulumi.Input[str]) -> aws.ec2.LaunchTemplate:
     ami = aws.ssm.get_parameter_output(name=AMI_PARAMETER, opts=invoke)
@@ -56,7 +61,7 @@ def launch_template(job: Job, sg: aws.ec2.SecurityGroup,
                              "subnet_id": subnet_id, "security_groups": [sg.id],
                              "delete_on_termination": "true"}],
         tag_specifications=[{"resource_type": kind, "tags": {**tags, "Name": f"msv-{job.run_id}"}}
-                            for kind in TAGGED_RESOURCES],
+                            for kind in tagged_kinds(job)],
         opts=opts,
     )
 
