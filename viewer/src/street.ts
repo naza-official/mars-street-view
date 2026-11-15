@@ -1,5 +1,5 @@
 import { Vector2 } from "three";
-import { ResolvedLayer } from "./catalog";
+import { ResolvedLayer, fetchFresh } from "./catalog";
 import { PanoInfo } from "./pano";
 import { MarsScene } from "./scene";
 import { ENTER_PANO_RADIUS_M, MoveInput, StopPoint, nearbyStops } from "./walk";
@@ -21,7 +21,7 @@ const MOVE_KEYS: Record<string, [keyof MoveInput, number]> = {
 
 export async function loadStops(layers: ResolvedLayer[]): Promise<StopPoint[]> {
   const lists = await Promise.all(layers.filter((l) => l.layer.assets.stops).map(async (l) => {
-    const res = await fetch(`${l.baseUrl}${l.layer.assets.stops}`);
+    const res = await fetchFresh(`${l.baseUrl}${l.layer.assets.stops}`);
     if (!res.ok) return [];
     const fc = (await res.json()) as { features: StopFeature[] };
     return fc.features.map((f) => toStop(f, l));
@@ -60,7 +60,7 @@ export class StreetView {
   async open(stopId: string): Promise<void> {
     const stop = this.stops.find((s) => s.id === stopId);
     if (!stop?.panoUrl) return;
-    const info = (await (await fetch(stop.panoUrl)).json()) as PanoInfo;
+    const info = (await (await fetchFresh(stop.panoUrl)).json()) as PanoInfo;
     const base = stop.panoUrl.slice(0, stop.panoUrl.lastIndexOf("/") + 1);
     await this.mars.enterPano(info, base, stop.id);
     this.refresh();

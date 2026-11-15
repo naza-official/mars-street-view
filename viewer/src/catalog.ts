@@ -23,6 +23,8 @@ export interface ResolvedLayer {
 
 export type Fetcher = (url: string) => Promise<Response>;
 
+export const fetchFresh: Fetcher = (url) => fetch(url, { cache: "no-cache" });
+
 const ORBITAL_LAYERS = new Set(["l1_global", "l2_regional", "l5_thermal"]);
 
 export function layerPrefix(layer: string): "orbital" | "rover" {

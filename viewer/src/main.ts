@@ -6,6 +6,7 @@ import { SITES, Site, formatCartographic } from "./geo";
 import { MarsScene } from "./scene";
 import { parsePosesCsv } from "./traverse";
 import { StreetView, loadStops } from "./street";
+import { fetchFresh } from "./catalog";
 
 const TERRAIN_RANK: Record<string, number> = { l1_global: 1, l2_regional: 2 };
 const DATA_BASE: string = import.meta.env.VITE_DATA_BASE ?? "";
@@ -73,7 +74,7 @@ function showLayers(list: HTMLElement, layers: ResolvedLayer[], errors: string[]
 async function addTraverse(mars: MarsScene, layer: ResolvedLayer): Promise<void> {
   const csv = layer.layer.assets.poses_csv;
   if (!csv) return;
-  const res = await fetch(`${layer.baseUrl}${csv}`);
+  const res = await fetchFresh(`${layer.baseUrl}${csv}`);
   if (res.ok) mars.addTraverse(parsePosesCsv(await res.text()));
 }
 
@@ -81,7 +82,7 @@ async function loadLayers(
   mars: MarsScene, street: StreetView, list: HTMLElement, panel: HTMLElement,
 ): Promise<void> {
   try {
-    const { layers, errors } = await resolveCatalog((u) => fetch(u), DATA_BASE);
+    const { layers, errors } = await resolveCatalog(fetchFresh, DATA_BASE);
     const detail = layers.filter((l) => TERRAIN_RANK[l.layer.layer] === 2)
       .map((l) => l.layer.bounds_lonlat);
     const terrain: { rank: number; tiles: TilesRenderer }[] = [];
