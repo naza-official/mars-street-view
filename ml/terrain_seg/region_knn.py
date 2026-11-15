@@ -129,6 +129,7 @@ def dino_tokens(rgb: np.ndarray, device, crop: int = 448) -> tuple[np.ndarray, i
 
 
 MOMO_CKPT = DATA / "models/momo/momo_vitb16.pth"
+_MODELS: dict = {}
 
 
 @torch.no_grad()
@@ -147,14 +148,16 @@ def momo_tokens(
 
     import timm
 
-    torch.serialization.add_safe_globals([_argparse.Namespace])
-    sd = torch.load(MOMO_CKPT, map_location="cpu", weights_only=True)["model"]
-    enc = {k: v for k, v in sd.items() if not k.startswith(("decoder", "mask_token"))}
-    model = timm.create_model(
-        "vit_base_patch16_224", pretrained=False, num_classes=0, dynamic_img_size=True
-    )
-    model.load_state_dict(enc, strict=True)
-    model = model.to(device).eval()
+    if "momo" not in _MODELS:
+        torch.serialization.add_safe_globals([_argparse.Namespace])
+        sd = torch.load(MOMO_CKPT, map_location="cpu", weights_only=True)["model"]
+        enc = {k: v for k, v in sd.items() if not k.startswith(("decoder", "mask_token"))}
+        net = timm.create_model(
+            "vit_base_patch16_224", pretrained=False, num_classes=0, dynamic_img_size=True
+        )
+        net.load_state_dict(enc, strict=True)
+        _MODELS["momo"] = net.to(device).eval()
+    model = _MODELS["momo"]
     mean = np.array([0.485, 0.456, 0.406], np.float32)
     std = np.array([0.229, 0.224, 0.225], np.float32)
     h, w = rgb.shape[:2]

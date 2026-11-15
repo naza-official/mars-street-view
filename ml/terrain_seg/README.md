@@ -62,3 +62,16 @@ the majority class everywhere. Bottlenecks: the rover model calls Perseverance l
 bedrock "soil" (domain shift from Curiosity), and orbital texture at 0.25 m does not resolve the
 rover-scale classes. Next: orbital-scale classes, fine-tuning a head on MOMO, more areas on AWS.
 MOMO patch tokens are position-debiased (MAE tokens encode position-in-crop).
+
+## Route corridor demo (live + cache)
+
+`corridor.py` classifies only the tiles a route needs: a fixed global grid of 256 m tiles over the
+PLACES orbital map, each computed live on first use (ortho fetched with HTTP multi-range requests,
+MOMO patch tokens, per-class kNN in the patch database) and cached under
+`tile_cache/<model>_<db hash>/` - rebuilding the database invalidates the cache automatically.
+Cost per 4 m cell = class cost x (1 + (slope/10 deg)^2), slopes > 25 deg blocked, least-cost path.
+
+Demo landing -> Seitah edge (814 m straight): 12 tiles, 210 s live, 0.2 s from cache (2.3 MB);
+route 983 m, 83 % soil, 9 % bedrock, 3 % sand (it bends around the dune fields).
+Class costs (soil 1, bedrock 1.5, sand 3, big rock 8, unknown 2.5) are placeholders to agree with
+Person A in a `contract` issue, together with the output grid and the meaning of "unknown".
