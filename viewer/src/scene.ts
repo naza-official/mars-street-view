@@ -19,6 +19,8 @@ interface PanoState {
 const BASE_SPHERE_DEPTH_M = 9_000;
 const FLOOR_RADIUS_M = MARS_RADIUS_M - BASE_SPHERE_DEPTH_M;
 const TRAVERSE_LIFT_M = 3;
+const SPACE_COLOR = 0x05060a;
+const MARS_SKY_COLOR = 0xa8876b;
 
 export interface Flight {
   from: Cartographic;
@@ -44,7 +46,7 @@ export class MarsScene {
   constructor(canvasParent: HTMLElement) {
     this.renderer = new WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
-    this.renderer.setClearColor(0x05060a);
+    this.renderer.setClearColor(SPACE_COLOR);
     canvasParent.appendChild(this.renderer.domElement);
     this.controls = new GlobeControls(this.scene, this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
@@ -138,6 +140,7 @@ export class MarsScene {
     this.flight = null;
     this.controls.enabled = false;
     this.pano = { mesh, at, az: 0, el: 0 };
+    this.renderer.setClearColor(MARS_SKY_COLOR);
     this.camera.fov = 70;
   }
 
@@ -147,6 +150,7 @@ export class MarsScene {
     this.scene.remove(mesh);
     mesh.geometry.dispose();
     this.pano = null;
+    this.renderer.setClearColor(SPACE_COLOR);
     this.camera.fov = 50;
     this.camera.updateProjectionMatrix();
     this.controls.enabled = true;

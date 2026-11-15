@@ -82,3 +82,39 @@ open http://localhost:5173/viewer/        # Jezero / OEB landing buttons
 - Feed findings 1, 3, 4, 5 to Person B (#11, #22).
 - M6: reuse `layers/l1_global/region.py`'s windowed `/vsicurl/` read for the HiRISE/CTX clips; L2 is what makes the stop sit on terrain.
 - M5: the floor-sphere fix and multi-tileset loading go into the viewer PR.
+
+## Phase 5: L2 Jezero + street view (2026-11-15)
+**Why:** with only L1 the stop mesh was buried (finding 1), and the page opened 10,000 km out, so all you saw was the brown base sphere.
+
+- **Sources** (public, anonymous HTTPS from `asc-pds-services/mosaic/mars2020_trn/`): HiRISE `JEZ_hirise_soc_006_DTM_..._1m_..._blend40.tif` (1.84 GB) + `JEZ_hirise_soc_006_orthoMosaic_25cm_..._first.tif` (7.36 GB), CTX `JEZ_ctx_B_soc_008` 20 m DTM + 6 m ortho for fill. All stored as uncompressed 1-row strips without overviews, so a window still downloads whole rows; fetched whole with `scripts/poc/fetch_ranges.py` (12 parallel ranges, ~26 MB/s). The first attempt hung on a stalled range (no timeout); the script now has 30 s timeouts, retries and resume.
+- **Datum:** the HiRISE DTM at OEB reads -2569.90 m = PLACES `elevation_above_areoid_m` -2569.91 → heights are above the areoid (despite "IAU sphere" in the metadata, which is the horizontal CRS). Converted with the PDS MEGDR areoid (`common.datum.areoid_offset`): offset at OEB -1683.19 m vs PLACES -1682.92 m (0.27 m).
+- **Build:** `layers/l2_regional/poc.py` warps HiRISE (CTX where empty: 51 % of the tile) onto the tile grid of root `9/203/220` (lon 77.3438–77.6953, lat 18.2812–18.6328, ~20 km), 11520² DTM (1.8 m posts), 32768² tinted ortho (0.64 m). Tiler: `--leaf-level 15 --texture-px 512 --split-level 12 --leaf-error 0.5` (new options in `layers/l1_global/tiles.py`).
+```
+L2 dtm: 20 s; ortho: 85 s; tiles: 41.6 s → 5461 tiles, 236 MB (levels 9-15, 900,714 leaf vertices)
+python -m common.validate .../l2_regional/jezero_poc/v1   → ok (after COG conversion)
+3d-tiles-validator .../tileset.json                       → numErrors 0, numWarnings 0
+```
+- **Height check vs L2** (16,611 poses inside the tile):
+
+| | L1 (MOLA 463 m) | L2 (HiRISE/CTX) |
+|---|---|---|
+| pilot stop, pose − terrain | −3.9 m | **+0.26 m** |
+| poses, median | −9.7 m | **−0.26 m** |
+| poses, p95 \|Δ\| | 46.4 m | **1.2 m** |
+
+- **Viewer:**
+  - Opens at Jezero (150 km), not from deep space.
+  - L1 is cut out (fragment discard, lon/lat box) wherever an L2 layer exists, so the terrains don't fight.
+  - **Street view:** a "Street view: <stop>" button per `<stop>_pano` asset. It puts the camera at `pano.json → camera` (Navcam eye), on an inside-out sphere (50 m) built in the stop's ENU frame from the equirect (col 0 = north, azimuth clockwise). Drag looks around, the wheel zooms the field of view, and Esc or the button exits. Above +19° (no imagery) shows a Mars-sky colour.
+  - `npm test` 24 passed, `npm run build` ok.
+- **Screenshots:**
+  - `docs/poc/08_start.png`: start view, L2 patch on L1.
+  - `09_l2_overview.png`: HiRISE delta + traverse.
+  - `10_stop_on_l2.png`: stop mesh sitting on L2.
+  - `11_street_north.png` / `12_street_south.png`: Navcam 360 at OEB.
+
+### Remaining findings
+- L4 mesh colour is still flat olive (finding 3), now visible on top of L2, so B should check the GLB material.
+- L1 (MDIM) vs L2 (HiRISE) imagery is offset by ~0.9 km at the L2 edge (D-008), and the brightness/tint differ.
+- The panorama has a vertical seam / colour step (the frame seams B noted).
+- Street view is entered by button only; clicking the stop in 3D is next.
