@@ -13,3 +13,6 @@ canvas { display: block; touch-action: none; }
 .exit-street { display: none; position: absolute; top: 12px; right: 12px; font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 6px; border: 1px solid #6b4a36; background: #3a2418; color: #f2e6da; cursor: pointer; }
 body.street .exit-street { display: block; }
 body.street .readout { display: none; }
+.stop-select { font: inherit; font-size: 12px; padding: 4px; border-radius: 6px; background: #1d1612; color: #f2e6da; border: 1px solid #6b4a36; max-width: 100%; }
+.hint { display: none; position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); padding: 6px 12px; border-radius: 6px; background: rgba(12, 12, 16, 0.7); font-size: 12px; text-align: center; max-width: calc(100vw - 32px); }
+body.street .hint { display: block; }

@@ -1,5 +1,6 @@
 import {
-  BufferGeometry, Float32BufferAttribute, Line, LineBasicMaterial, Mesh, MeshBasicMaterial,
+  BufferGeometry, DoubleSide, Float32BufferAttribute, Group, Line, LineBasicMaterial, Mesh,
+  MeshBasicMaterial, Shape, ShapeGeometry,
   SphereGeometry, Matrix4, PerspectiveCamera, Raycaster, Scene, Vector2, Vector3, WebGLRenderer,
 } from "three";
 import { CAMERA_FRAME, Ellipsoid, GlobeControls, TilesRenderer } from "3d-tiles-renderer";
@@ -8,12 +9,42 @@ import { flightDuration, flightPoint } from "./flight";
 import { TraversePoint } from "./traverse";
 import { LonLatBox, clipObject, clipUniform } from "./clip";
 import { PanoInfo, loadPanoMesh } from "./pano";
+import {
+  ARROW_RANGE_M, EYE_HEIGHT_M, MoveInput, StopPoint, nearbyStops, step,
+} from "./walk";
 
-interface PanoState {
-  mesh: Mesh;
+export type FirstPersonMode = "pano" | "walk";
+
+export interface FirstPerson {
+  mode: FirstPersonMode;
   at: Cartographic;
   az: number;
   el: number;
+  mesh?: Mesh;
+  arrows?: Group;
+  stopId?: string;
+}
+
+const GROUND_PROBE_M = 500;
+
+function arrowMesh(azDeg: number, dist: number, stopId: string): Mesh {
+  const shape = new Shape();
+  shape.moveTo(0, 0.9);
+  shape.lineTo(0.7, -0.4);
+  shape.lineTo(0, -0.1);
+  shape.lineTo(-0.7, -0.4);
+  shape.closePath();
+  const material = new MeshBasicMaterial({
+    color: 0xffffff, transparent: true, opacity: 0.85, depthTest: false, side: DoubleSide,
+  });
+  const mesh = new Mesh(new ShapeGeometry(shape), material);
+  const az = toRad(azDeg);
+  const r = Math.min(8, 3 + dist / 40);
+  mesh.position.set(Math.sin(az) * r, Math.cos(az) * r, -EYE_HEIGHT_M);
+  mesh.rotation.z = -az;
+  mesh.renderOrder = 30;
+  mesh.userData.stopId = stopId;
+  return mesh;
 }
 
 const BASE_SPHERE_DEPTH_M = 9_000;
@@ -40,7 +71,10 @@ export class MarsScene {
   private last = performance.now();
   private readonly raycaster = new Raycaster();
   private flight: Flight | null = null;
-  private pano: PanoState | null = null;
+  private fp: FirstPerson | null = null;
+  private terrain: TilesRenderer[] = [];
+  private stops: StopPoint[] = [];
+  private move: MoveInput = { forward: 0, right: 0, run: false };
   private readonly frame = new Matrix4();
 
   constructor(canvasParent: HTMLElement) {
@@ -125,54 +159,132 @@ export class MarsScene {
     return { lat: toDeg(c.lat), lon: toDeg(c.lon), height: c.height };
   }
 
-  get inPano(): boolean {
-    return this.pano !== null;
+  get mode(): FirstPersonMode | null {
+    return this.fp?.mode ?? null;
   }
 
-  async enterPano(info: PanoInfo, baseUrl: string): Promise<void> {
-    this.exitPano(false);
+  get inPano(): boolean {
+    return this.fp?.mode === "pano";
+  }
+
+  get firstPerson(): FirstPerson | null {
+    return this.fp;
+  }
+
+  setTerrain(tiles: TilesRenderer[]): void {
+    this.terrain = tiles;
+  }
+
+  setStops(stops: StopPoint[]): void {
+    this.stops = stops;
+  }
+
+  async enterPano(info: PanoInfo, baseUrl: string, stopId: string): Promise<void> {
     const c = info.camera;
     const at = { lat: c.lat_n, lon: c.lon_e, height: c.height_above_sphere_m };
-    const enu = this.ellipsoid.getEastNorthUpFrame(
-      toRad(at.lat), toRad(at.lon), at.height, new Matrix4());
-    const mesh = await loadPanoMesh(info, baseUrl, enu);
+    const mesh = await loadPanoMesh(info, baseUrl, this.enuFrame(at));
+    const view = this.fp ?? { az: 0, el: 0 };
+    this.leaveFirstPerson();
     this.scene.add(mesh);
-    this.flight = null;
-    this.controls.enabled = false;
-    this.pano = { mesh, at, az: 0, el: 0 };
-    this.renderer.setClearColor(MARS_SKY_COLOR);
-    this.camera.fov = 70;
+    const arrows = this.stopArrows(at, stopId);
+    this.scene.add(arrows);
+    this.fp = { mode: "pano", at, az: view.az, el: view.el, mesh, arrows, stopId };
+    this.beginFirstPerson(MARS_SKY_COLOR, 70);
   }
 
-  exitPano(toOrbit = true): void {
-    if (!this.pano) return;
-    const { mesh, at } = this.pano;
-    this.scene.remove(mesh);
-    mesh.geometry.dispose();
-    this.pano = null;
+  enterWalk(at: Cartographic): void {
+    const view = this.fp ?? { az: 0, el: -5 };
+    this.leaveFirstPerson();
+    this.fp = { mode: "walk", at: { ...at }, az: view.az, el: view.el };
+    this.beginFirstPerson(SPACE_COLOR, 70);
+  }
+
+  exitFirstPerson(): void {
+    if (!this.fp) return;
+    const at = this.fp.at;
+    this.leaveFirstPerson();
     this.renderer.setClearColor(SPACE_COLOR);
     this.camera.fov = 50;
     this.camera.updateProjectionMatrix();
     this.controls.enabled = true;
-    if (toOrbit) this.placeCamera({ ...at, height: at.height + 400 }, 0, -60);
+    this.placeCamera({ ...at, height: at.height + 400 }, 0, -60);
   }
 
-  lookPano(dAz: number, dEl: number): void {
-    if (!this.pano) return;
-    this.pano.az = (this.pano.az + dAz + 360) % 360;
-    this.pano.el = Math.max(-85, Math.min(85, this.pano.el + dEl));
+  look(dAz: number, dEl: number): void {
+    if (!this.fp) return;
+    this.fp.az = (this.fp.az + dAz + 360) % 360;
+    this.fp.el = Math.max(-85, Math.min(85, this.fp.el + dEl));
   }
 
-  zoomPano(dFov: number): void {
+  zoom(dFov: number): void {
     this.camera.fov = Math.max(15, Math.min(100, this.camera.fov + dFov));
   }
 
-  private stepPano(): void {
-    if (!this.pano) return;
-    this.placeCamera(this.pano.at, this.pano.az, this.pano.el);
+  setMove(input: MoveInput): void {
+    this.move = input;
+  }
+
+  pickArrow(ndc: Vector2): string | null {
+    if (!this.fp?.arrows) return null;
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const hit = this.raycaster.intersectObjects(this.fp.arrows.children, false)[0];
+    return (hit?.object.userData.stopId as string | undefined) ?? null;
+  }
+
+  groundHeight(at: Cartographic): number | null {
+    const up = this.ellipsoid.getCartographicToNormal(toRad(at.lat), toRad(at.lon), new Vector3());
+    const origin = this.ellipsoid.getCartographicToPosition(
+      toRad(at.lat), toRad(at.lon), at.height + GROUND_PROBE_M, new Vector3());
+    this.raycaster.set(origin, up.negate());
+    const hit = this.raycaster.intersectObjects(this.terrain.map((t) => t.group), true)[0];
+    if (!hit) return null;
+    return this.ellipsoid.getPositionToCartographic(hit.point, {}).height;
+  }
+
+  private enuFrame(at: Cartographic): Matrix4 {
+    return this.ellipsoid.getEastNorthUpFrame(toRad(at.lat), toRad(at.lon), at.height, new Matrix4());
+  }
+
+  private stopArrows(at: Cartographic, stopId: string): Group {
+    const group = new Group();
+    group.matrixAutoUpdate = false;
+    group.matrix.copy(this.enuFrame(at));
+    for (const n of nearbyStops(at, this.stops, ARROW_RANGE_M, stopId)) {
+      group.add(arrowMesh(n.az, n.dist, n.stop.id));
+    }
+    return group;
+  }
+
+  private beginFirstPerson(clear: number, fov: number): void {
+    this.flight = null;
+    this.controls.enabled = false;
+    this.renderer.setClearColor(clear);
+    this.camera.fov = fov;
+  }
+
+  private leaveFirstPerson(): void {
+    if (!this.fp) return;
+    for (const obj of [this.fp.mesh, this.fp.arrows]) if (obj) this.scene.remove(obj);
+    this.fp.mesh?.geometry.dispose();
+    this.fp = null;
+  }
+
+  private stepFirstPerson(dt: number): void {
+    if (!this.fp) return;
+    if (this.fp.mode === "walk") this.stepWalk(dt);
+    this.placeCamera(this.fp.at, this.fp.az, this.fp.el);
     this.camera.near = 0.05;
     this.camera.far = 2_000_000;
     this.camera.updateProjectionMatrix();
+  }
+
+  private stepWalk(dt: number): void {
+    if (!this.fp) return;
+    const moving = this.move.forward !== 0 || this.move.right !== 0;
+    const next = moving ? step(this.fp.at, this.fp.az, this.move, Math.min(dt, 0.1)) : this.fp.at;
+    const ground = this.groundHeight(next);
+    if (ground !== null) next.height = ground + EYE_HEIGHT_M;
+    this.fp.at = next;
   }
 
   start(): void {
@@ -194,7 +306,7 @@ export class MarsScene {
     const dt = (now - this.last) / 1000;
     this.last = now;
     this.stepFlight(now);
-    if (this.pano) this.stepPano();
+    if (this.fp) this.stepFirstPerson(dt);
     else if (!this.flight) this.controls.update(dt);
     this.camera.updateMatrixWorld();
     for (const tiles of this.tilesets) tiles.update();

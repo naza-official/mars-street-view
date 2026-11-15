@@ -49,6 +49,7 @@ PANO_PREFERENCE = [
     "RAS_{code}_CYL_S_UNCORCT",
     "RAS_{code}_CYL_S_UNCORCG",
     "RAS_{code}_CYL_S_HRZTILS",
+    "RAS_{code}_CYL_S_",
 ]
 
 
