@@ -15,10 +15,57 @@ Newest session first. Each entry: date, milestone, what changed, evidence (comma
 | D-007 | Public read for the viewer (CloudFront needs account verification) | open, issue #17, `docs/decisions/D-007-public-read.md`, rec: AWS Support case, then `cdn=true` |
 
 ## Sessions
-### 2026-11-14 — M4 L1 global base (status: in progress, branch `m4-l1-global`, draft PR #21)
+### 2026-11-14/15 — M4 L1 global base (status: review, branch `m4-l1-global`, PR #21)
 
-**Done so far:** D-002 decided (A), D-008 decided (conversion shift). `common/terrain.py` (contract #20), `layers/l1_global/{ingest,shift,tiles,layer,selftest}.py`, `rules.smk` (target `l1`), `pipelines/catalog.py`, parallel `publish_dir`, `.nosync` in work sync. Image **v0.4.0** published (`sha256:b22f66dba8dd2be30ad6c40784150745381f8c5194f375f4779f6a5df5ea0104`); in-image dem_geoid global self-test vs PDS areoid: mean -0.006 m, max 0.61 m. `pytest -q` 114 passed, ruff clean.
-**Pending:** global build — human runs `MSV_IMAGE_TAG=v0.4.0 MSV_INSTANCE_TYPES=m7i.2xlarge,m6i.2xlarge,m5.2xlarge MSV_VOLUME_GB=100 bash scripts/run_job.sh l1 global`; then acceptance commands, `docs/runs.md`, M4 → `review`.
+**Decisions:** D-002 → A (own mesher, 3D Tiles 1.1 GLB; #5 closed). D-008 → the M4 "MDIM shift" criterion is the datum-conversion shift; MDIM–MOLA registration (~0.9 km at Jezero) is recorded, not corrected (#19). Contract issue #20 (common.terrain) for Person B; #15 gets the parallel `publish_dir`.
+
+**What changed:**
+- Sources: planetarymaps.usgs.gov redirects to `s3://asc-pds-services/mosaic/` (us-west-2). Neither MOLA nor MDIM is a COG (uncompressed strips), so the VM copies them in-region and checks the published `.md5`. PDS labels: both planetocentric on a 3,396,190 m sphere for lat/lon (MDIM label has C axis 3376.2 but `PROJECTION_LATITUDE_TYPE = PLANETOCENTRIC`), pixel edges on ±180/±90 (the MOLA GeoTIFF header origin is off by ~½ px x, ~¼ px y; we use the PDS grid, as the M1 fixtures did).
+- `common/terrain.py`: TileKey/TileGrid, pydelatin TIN on heights along the tile-centre up vector (curvature-aware), regular grid below level 4, skirts, GLB with `KHR_mesh_quantization` + `KHR_materials_unlit` + embedded JPEG, `box` volumes only. No meshopt (only an alpha third-party Python binding exists).
+- `layers/l1_global/`: `ingest` (fetch+md5, longitude-roll VRT, `dem_geoid` + PDS areoid check, COGs), `shift` (`registration`: NCC of MDIM vs MOLA hillshades over 8 azimuths; `conversion`: source vs product pixels), `tiles` (2x1 roots, levels 0-7, 180 segments/tile so leaves = 463 m, leaf TIN 10 m, external tilesets from level 4, geometric error = TIN + quantisation + pyramid refinement chain), `layer` (layer.json + notes), `selftest` (in-image global dem_geoid check, run in the image CI), `rules.smk` (target `l1`, version from `layer.VERSION`).
+- `pipelines/catalog.py` (index.json with If-Match / If-None-Match), `common.storage.publish_dir` parallel (16 threads, layer.json last), `.nosync` markers skip dirs in the work sync, Snakefile puts the repo on `sys.path`.
+- `infra/build_vm`: `MSV_MARKET=spot|on-demand` (spot-request tags only on Spot).
+- Images: v0.4.0, v0.4.1, **v0.4.2** (`sha256:a3dc0555121fd753424438b22516669b14ed9746e2bb7493c5fb19220af34e2d`), pyproject 0.2.0 (`terrain` extra).
+
+**Runs (5, ~$1.07 total, all in `docs/runs.md`):** 1 failed (TileKey not orderable with two roots), 2 Spot interruption (no capacity, us-west-2d), 3 on-demand launch rejected (spot-request tags), 4 succeeded → **v1 published with a defect** (sub-tileset URIs relative to the root, levels 4-7 unresolvable; superseded), 5 succeeded → **v2**.
+
+**Evidence (acceptance, on v2):**
+```
+$ python -m common.validate s3://mars-sv-123412369922/orbital/l1_global/global/v2/
+  asset dtm: size: 46080x23040x1 float32 block 512x512 overviews [2, 4, 8, 16, 32, 64, 128] DEFLATE
+  asset dtm: kind: elevation
+  asset dtm: height range: -23208.1 .. 21079.0 m
+  asset ortho: size: 92160x46080x3 uint8 block 512x512 overviews [2, 4, 8, 16, 32, 64, 128, 256] JPEG
+  asset ortho: kind: imagery
+  asset tileset: present
+ok s3://mars-sv-123412369922/orbital/l1_global/global/v2/
+exit 0
+$ aws s3 cp s3://mars-sv-123412369922/catalog/index.json -
+{"schema": "1.0", "layers": {"l1_global/global": "v2"}}
+$ layer.json notes (v2, built_with ghcr.io/naza-official/mars-sv:v0.4.2)
+MDIM datum-conversion shift at Jezero (77.5E 18.4N), measured: -0.2 m E, 0.2 m N (|0.3| m, limit 232 m; D-008). MDIM 2.1 vs MOLA image registration at Jezero: -897.0 m E, 71.0 m N (NCC 0.52); a source limitation, not corrected in v2 (D-008). Heights: MOLA areoid -> sphere with ASP dem_geoid; vs PDS areoid mean 0.003 m, max 1.064 m over 2000 px. Tiles: 3D Tiles 1.1 GLB, 43690 tiles, 3.73 GB, levels 0-7, leaf TIN error 10.0 m, ...
+$ aws ec2 describe-instances --filters Name=tag:project,Values=mars-sv (pending..shutting-down) -> 0
+$ aws ec2 describe-volumes --filters Name=tag:project,Values=mars-sv -> 0
+$ pulumi stack --stack job -> Current stack resources (0)
+```
+Extra checks:
+```
+URI resolution over every published tileset json: objects 44206, tileset jsons 513, content refs 44202, glb 43690, unresolved 0
+3d-tiles-validator on published sub/4/6/6.json (Jezero, 85 tiles): numErrors 0, numWarnings 0, numInfos 85 (NPOT 360 px textures)
+local regional build with external tilesets: validator 0 errors / 0 warnings; 3DTilesRendererJS loads to leaves, 0 errors (default errorTarget is 16 px)
+ruff check . -> All checks passed!   pytest -q -> 117 passed
+image CI selftest: dem_geoid vs PDS areoid on a global 0-360 grid: mean -0.006 m, max 0.61 m
+```
+
+**Open problems:**
+- `orbital/l1_global/global/v1/` is published and broken below level 4 (immutable; catalog points at v2). Person B / the viewer must not use v1.
+- `common.validate` only checks a tileset's presence; it should resolve content URIs (that would have caught v1). Needs a `common/` change → contract issue.
+- MDIM–MOLA misregistration 0.15–1.1 km (D-008); possible `l1_global` v3 with a global displacement field.
+- No meshopt; tiles 3.73 GB. Objects are served without Content-Type/Encoding (fine for fetch; gzip would cut mesh bytes).
+- `build_vm` always uses the first default subnet (us-west-2d); Spot interruptions there → on-demand option added. D-006 (vCPU quota now 8) and D-007 (CloudFront, needed by M5) still open.
+- SSO sessions are 4 h; `run_job.sh`'s final destroy fails if the session expires while waiting.
+
+**Next step:** human reviews PR #21, sets M4 `done`. Then M5 (viewer skeleton; needs D-007) or M6 (L2 Jezero).
 
 ### 2026-11-14 — M3 Pulumi storage + build_vm, smoke run (status: review, branch `m3-infra`)
 
