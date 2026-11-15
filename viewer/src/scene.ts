@@ -8,6 +8,7 @@ import { flightDuration, flightPoint } from "./flight";
 import { TraversePoint } from "./traverse";
 
 const BASE_SPHERE_DEPTH_M = 9_000;
+const FLOOR_RADIUS_M = MARS_RADIUS_M - BASE_SPHERE_DEPTH_M;
 const TRAVERSE_LIFT_M = 3;
 
 export interface Flight {
@@ -22,6 +23,7 @@ export class MarsScene {
   readonly camera = new PerspectiveCamera(50, 1, 1, 4 * MARS_RADIUS_M);
   readonly renderer: WebGLRenderer;
   readonly ellipsoid = new Ellipsoid(MARS_RADIUS_M, MARS_RADIUS_M, MARS_RADIUS_M);
+  readonly floor = new Ellipsoid(FLOOR_RADIUS_M, FLOOR_RADIUS_M, FLOOR_RADIUS_M);
   readonly controls: GlobeControls;
   readonly tilesets: TilesRenderer[] = [];
   private last = performance.now();
@@ -36,7 +38,7 @@ export class MarsScene {
     canvasParent.appendChild(this.renderer.domElement);
     this.controls = new GlobeControls(this.scene, this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
-    this.controls.setEllipsoid(this.ellipsoid, this.scene);
+    this.controls.setEllipsoid(this.floor, this.scene);
     (this.raycaster as Raycaster & { firstHitOnly?: boolean }).firstHitOnly = true;
     this.scene.add(this.baseSphere());
     this.placeCamera({ lat: 18.4, lon: 77.5, height: 3 * MARS_RADIUS_M });
@@ -71,7 +73,7 @@ export class MarsScene {
   }
 
   private baseSphere(): Mesh {
-    const geometry = new SphereGeometry(MARS_RADIUS_M - BASE_SPHERE_DEPTH_M, 96, 48);
+    const geometry = new SphereGeometry(FLOOR_RADIUS_M, 96, 48);
     geometry.rotateX(Math.PI / 2);
     return new Mesh(geometry, new MeshBasicMaterial({ color: 0x5a3a2a }));
   }
@@ -81,9 +83,10 @@ export class MarsScene {
     return { lat: toDeg(c.lat), lon: toDeg(c.lon), height: c.height };
   }
 
-  placeCamera(c: Cartographic): void {
+  placeCamera(c: Cartographic, azimuthDeg = 0, elevationDeg = -90): void {
     this.ellipsoid.getObjectFrame(
-      toRad(c.lat), toRad(c.lon), c.height, 0, -Math.PI / 2, 0, this.frame, CAMERA_FRAME,
+      toRad(c.lat), toRad(c.lon), c.height, toRad(azimuthDeg), toRad(elevationDeg), 0,
+      this.frame, CAMERA_FRAME,
     );
     this.frame.decompose(this.camera.position, this.camera.quaternion, this.camera.scale);
     this.camera.updateMatrixWorld();
