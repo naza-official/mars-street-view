@@ -60,3 +60,10 @@ def test_user_data_renders_all_placeholders(tmp_path: Path) -> None:
     path = tmp_path / "ud.sh"
     path.write_text(script)
     assert subprocess.run(["bash", "-n", str(path)]).returncode == 0
+
+
+def test_market_from_env_and_validation() -> None:
+    assert job.resolve({}, {"MSV_MARKET": "on-demand"}).market == "on-demand"
+    assert job.resolve({}, {}).market == "spot"
+    with pytest.raises(ValueError):
+        job.resolve({}, {"MSV_MARKET": "reserved"})

@@ -35,8 +35,9 @@ WORKDIR /opt/msv
 COPY pyproject.toml ./
 COPY common ./common
 COPY pipelines ./pipelines
+COPY layers ./layers
 COPY configs ./configs
-RUN /opt/conda/envs/msv/bin/pip install --no-cache-dir ".[tiler]"
+RUN /opt/conda/envs/msv/bin/pip install --no-cache-dir ".[tiler,terrain]"
 
 ENV PATH=/opt/conda/envs/msv/bin:/opt/conda/bin:${ASP_DIR}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     PYTHONPATH=/opt/msv \

@@ -5,12 +5,20 @@ from pathlib import Path
 from common.storage import ObjectUri, parse_uri, upload_file
 
 SKIP_PARTS = {".snakemake", "__pycache__"}
+NOSYNC_MARKER = ".nosync"
+
+
+def nosync_dirs(root: Path) -> set[Path]:
+    return {marker.parent for marker in root.rglob(NOSYNC_MARKER)}
 
 
 def files_to_sync(root: Path) -> Iterator[Path]:
+    skipped = nosync_dirs(root)
     for path in sorted(root.rglob("*")):
         rel = path.relative_to(root)
-        if path.is_file() and not SKIP_PARTS.intersection(rel.parts):
+        if not path.is_file() or SKIP_PARTS.intersection(rel.parts):
+            continue
+        if not skipped.intersection(path.parents):
             yield path
 
 

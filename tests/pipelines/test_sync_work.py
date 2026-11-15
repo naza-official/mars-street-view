@@ -31,3 +31,12 @@ def test_sync_uploads_each_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(sync_work, "upload_file", lambda path, uri: calls.append(uri.key))
     assert sync_work.main([str(tmp_path), "s3://b/work/r1"]) == 0
     assert calls == ["work/r1/DONE", "work/r1/a/x.tif"]
+
+
+def test_nosync_marker_skips_directory(tmp_path) -> None:
+    from pipelines.sync_work import files_to_sync
+    (tmp_path / "raw" / "deep").mkdir(parents=True)
+    (tmp_path / "raw" / ".nosync").write_text("")
+    (tmp_path / "raw" / "deep" / "big.tif").write_text("x")
+    (tmp_path / "log.txt").write_text("y")
+    assert [p.name for p in files_to_sync(tmp_path)] == ["log.txt"]

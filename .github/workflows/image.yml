@@ -8,6 +8,7 @@ on:
       - "docker/**"
       - "common/**"
       - "pipelines/**"
+      - "layers/**"
       - "pyproject.toml"
       - ".github/workflows/image.yml"
   workflow_dispatch:
@@ -67,6 +68,7 @@ jobs:
           docker run --rm "$tag" pc_align --help | head -5
           docker run --rm "$tag" snakemake --version
           docker run --rm "$tag" dem_geoid --help | head -5
+          docker run --rm "$tag" python -m layers.l1_global.selftest
           if [ "${{ inputs.with_isis }}" = "true" ]; then docker run --rm "$tag" /opt/conda/envs/isis/bin/cam2map -help > /dev/null; fi
           docker image inspect "$tag" --format '{{.Size}}' | awk '{printf "image size %.2f GB\n", $1/1e9}'
       - name: Push
