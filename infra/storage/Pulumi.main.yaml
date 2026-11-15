@@ -4,4 +4,5 @@ config:
   msv-storage:aws_profile: claude-agent
   msv-storage:viewer_origins:
     - http://localhost:5173
-  msv-storage:cdn: "true"
+  msv-storage:cdn: "false"
+  msv-storage:public_read: "true"
