@@ -3,6 +3,7 @@ import io
 import json
 import multiprocessing as mp
 import os
+import posixpath
 import sys
 import time
 from dataclasses import dataclass, field
@@ -216,35 +217,39 @@ def subtree_uri(key: TileKey) -> str:
     return f"sub/{key.name}.json"
 
 
+def relative(uri: str, base: str) -> str:
+    return posixpath.relpath(uri, base) if base else uri
+
+
 def tile_node(key: TileKey, records: dict, geometric: dict, parent_origin: np.ndarray,
-              externals: dict[str, dict]) -> dict:
+              externals: dict[str, dict], base: str = "") -> dict:
     rec = records[key]
     origin = np.array(rec["origin"])
     children = []
     for child in (key.children() if key.level < LEAF_LEVEL else []):
         if child in records:
-            children.append(child_entry(child, records, geometric, origin, externals))
+            children.append(child_entry(child, records, geometric, origin, externals, base))
     node = {"transform": terrain.translation(origin - parent_origin),
             "boundingVolume": {"box": rec["box"]},
             "geometricError": round(geometric[key] + rec["quant_m"], 3),
-            "refine": "REPLACE", "content": {"uri": tile_uri(key)}}
+            "refine": "REPLACE", "content": {"uri": relative(tile_uri(key), base)}}
     if children:
         node["children"] = children
     return node
 
 
 def child_entry(key: TileKey, records: dict, geometric: dict, parent_origin: np.ndarray,
-                externals: dict[str, dict]) -> dict:
-    node = tile_node(key, records, geometric, parent_origin, externals)
+                externals: dict[str, dict], base: str = "") -> dict:
     if key.level != SPLIT_LEVEL:
-        return node
+        return tile_node(key, records, geometric, parent_origin, externals, base)
     uri = subtree_uri(key)
+    node = tile_node(key, records, geometric, parent_origin, externals, posixpath.dirname(uri))
     externals[uri] = {"asset": {"version": "1.1"}, "geometricError": node["geometricError"],
                       "root": node}
     offset = np.array(records[key]["origin"]) - parent_origin
     return {"boundingVolume": {"box": terrain.shift_box(records[key]["box"], offset)},
             "geometricError": node["geometricError"], "refine": "REPLACE",
-            "content": {"uri": uri}}
+            "content": {"uri": relative(uri, base)}}
 
 
 def top_keys(records: dict) -> list[TileKey]:

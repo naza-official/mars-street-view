@@ -106,3 +106,34 @@ def test_assemble_with_two_global_roots() -> None:
     uris = [c["content"]["uri"] for c in tileset["root"]["children"]]
     assert uris == ["tiles/0/0/0.glb", "tiles/0/0/1.glb"]
     assert externals == {}
+
+
+def content_uris(path: Path) -> list[Path]:
+    found: list[Path] = []
+
+    def walk(node: dict) -> None:
+        uri = node.get("content", {}).get("uri")
+        if uri:
+            target = (path.parent / uri).resolve()
+            found.append(target)
+            if target.suffix == ".json":
+                found.extend(content_uris(target))
+        for child in node.get("children", []):
+            walk(child)
+
+    walk(json.loads(path.read_text())["root"])
+    return found
+
+
+def test_external_tileset_uris_resolve_from_their_own_file(tmp_path: Path,
+                                                            monkeypatch) -> None:
+    monkeypatch.setattr(tiles, "SPLIT_LEVEL", 7)
+    dtm, ortho = write_inputs(tmp_path)
+    out = tmp_path / "tiles_out"
+    tiles.build(dtm, out, ortho, ROOT, workers=1, leaf_error_m=5.0)
+    targets = content_uris(out / "tileset.json")
+    assert sum(t.suffix == ".json" for t in targets) == 4
+    assert sum(t.suffix == ".glb" for t in targets) == 5
+    assert all(t.exists() for t in targets), [str(t) for t in targets if not t.exists()]
+    sub = json.loads((out / "sub/7/50/55.json").read_text())
+    assert sub["root"]["content"]["uri"] == "../../../tiles/7/50/55.glb"

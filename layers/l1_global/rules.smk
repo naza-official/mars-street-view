@@ -1,4 +1,6 @@
-L1_DEST = f"s3://{BUCKET}/orbital/l1_global/global/v1/"
+from layers.l1_global.layer import VERSION as L1_VERSION
+
+L1_DEST = f"s3://{BUCKET}/orbital/l1_global/global/{L1_VERSION}/"
 
 
 rule l1_fetched:
@@ -83,4 +85,7 @@ rule l1_publish:
 rule l1:
     input: "l1/published.txt"
     output: "l1/catalog.json"
-    shell: "python -m pipelines.catalog l1_global/global v1 --bucket {BUCKET} > {output}.tmp && mv {output}.tmp {output}"
+    params: version=L1_VERSION, bucket=BUCKET
+    shell:
+        "python -m pipelines.catalog l1_global/global {params.version} --bucket {params.bucket}"
+        " > {output}.tmp && mv {output}.tmp {output}"

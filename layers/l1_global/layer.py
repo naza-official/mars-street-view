@@ -8,7 +8,9 @@ from common import layerjson
 from common.crs import BASE_CRS_CODE, DATUM_ID, METRES_PER_DEGREE
 from layers.l1_global import ingest, tiles
 
-LAYER, SITE, VERSION = "l1_global", "global", "v1"
+LAYER, SITE, VERSION = "l1_global", "global", "v2"
+SUPERSEDES = ("v1: sub-tileset content URIs were relative to the root, so levels 4-7 did not "
+              "resolve. ")
 ASSETS = {"dtm": "dtm.tif", "ortho": "ortho.tif", "tileset": "tileset.json"}
 SHIFT_LIMIT_M = 232.0
 
@@ -26,13 +28,13 @@ def notes(conversion: dict, registration: dict, geoid: dict, stats: dict) -> str
         f"(|{conversion['magnitude_m']}| m, limit {SHIFT_LIMIT_M:.0f} m; D-008). "
         f"MDIM 2.1 vs MOLA image registration at Jezero: {registration['east_m']} m E, "
         f"{registration['north_m']} m N (NCC {registration['score']}); a source limitation, "
-        f"not corrected in v1 (D-008). "
+        f"not corrected in {VERSION} (D-008). "
         f"Heights: MOLA areoid -> sphere with ASP dem_geoid; vs PDS areoid mean "
         f"{geoid['mean_m']:.3f} m, max {geoid['max_abs_m']:.3f} m over {geoid['n']} px. "
         f"Tiles: 3D Tiles 1.1 GLB, {stats['tiles']} tiles, {stats['bytes'] / 1e9:.2f} GB, "
         f"levels 0-{tiles.LEAF_LEVEL}, leaf TIN error {stats.get('leaf_error_m', '?')} m, "
         f"KHR_mesh_quantization, MDIM JPEG textures {tiles.TEXTURE_PX} px, external "
-        f"tilesets from level {tiles.SPLIT_LEVEL}."
+        f"tilesets from level {tiles.SPLIT_LEVEL}. Supersedes {SUPERSEDES}"
     )
 
 

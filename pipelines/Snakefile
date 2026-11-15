@@ -1,6 +1,8 @@
+import sys
 from pathlib import Path
 
 REPO = Path(workflow.basedir).parent
+sys.path.insert(0, str(REPO))
 
 configfile: str(REPO / "configs" / "sites" / "jezero.yaml")
 
