@@ -1,6 +1,7 @@
 import {
   BufferGeometry, DoubleSide, Float32BufferAttribute, Group, Line, LineBasicMaterial, Mesh,
-  MeshBasicMaterial, Object3D, Shape, ShapeGeometry,
+  CatmullRomCurve3, Color, InstancedMesh, MeshBasicMaterial, Object3D, PlaneGeometry, Shape,
+  ShapeGeometry, TubeGeometry,
   SphereGeometry, Matrix4, PerspectiveCamera, Raycaster, Scene, Vector2, Vector3, WebGLRenderer,
 } from "three";
 import { CAMERA_FRAME, Ellipsoid, GlobeControls, TilesRenderer } from "3d-tiles-renderer";
@@ -9,8 +10,9 @@ import { flightDuration, flightPoint } from "./flight";
 import { TraversePoint } from "./traverse";
 import { LonLatBox, clipObject, clipUniform } from "./clip";
 import { PanoInfo, loadPanoMesh } from "./pano";
+import { RouteData, RoutePoint, classColor } from "./route";
 import {
-  ARROW_RANGE_M, EYE_HEIGHT_M, MoveInput, StopPoint, nearbyStops, step,
+  ARROW_RANGE_M, EYE_HEIGHT_M, MoveInput, StopPoint, localOffset, nearbyStops, step,
 } from "./walk";
 
 export type FirstPersonMode = "pano" | "walk";
@@ -26,6 +28,40 @@ export interface FirstPerson {
 }
 
 const GROUND_PROBE_M = 500;
+const ROUTE_LIFT_M = 0.6;
+const CELL_LIFT_M = 1.5;
+
+function enuPoint(origin: Cartographic, p: RoutePoint, lift: number): Vector3 {
+  const { north, east } = localOffset(origin, { lat: p[1], lon: p[0], height: p[2] });
+  return new Vector3(east, north, p[2] - origin.height + lift);
+}
+
+function routeCells(data: RouteData, origin: Cartographic): InstancedMesh {
+  const plane = new PlaneGeometry(data.cell_m, data.cell_m);
+  const material = new MeshBasicMaterial({
+    transparent: true, opacity: 0.42, depthWrite: false, depthTest: false, side: DoubleSide,
+  });
+  const mesh = new InstancedMesh(plane, material, data.cells.length);
+  mesh.renderOrder = 9;
+  const m = new Matrix4();
+  const colour = new Color();
+  data.cells.forEach((p, i) => {
+    m.makeTranslation(enuPoint(origin, p, CELL_LIFT_M));
+    mesh.setMatrixAt(i, m);
+    mesh.setColorAt(i, colour.setRGB(...classColor(data.legend, p[3])));
+  });
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+function routeTube(data: RouteData, origin: Cartographic): Mesh {
+  const pts = data.route.map((p) => enuPoint(origin, p, ROUTE_LIFT_M + 0.8));
+  const path = new CatmullRomCurve3(pts, false, "catmullrom", 0.1);
+  const geometry = new TubeGeometry(path, Math.max(64, pts.length * 4), 1.2, 6, false);
+  const mesh = new Mesh(geometry, new MeshBasicMaterial({ color: 0xffffff }));
+  mesh.frustumCulled = false;
+  return mesh;
+}
 
 function arrowMesh(azDeg: number, dist: number, stopId: string): Mesh {
   const shape = new Shape();
@@ -74,6 +110,8 @@ export class MarsScene {
   private fp: FirstPerson | null = null;
   private terrain: TilesRenderer[] = [];
   private readonly overlays: Object3D[] = [];
+  private readonly routeGroups: Group[] = [];
+  private classesWanted = true;
   private stops: StopPoint[] = [];
   private move: MoveInput = { forward: 0, right: 0, run: false };
   private readonly frame = new Matrix4();
@@ -122,6 +160,37 @@ export class MarsScene {
     this.scene.add(line);
     this.overlays.push(line);
     return line;
+  }
+
+  addRoute(data: RouteData): Group {
+    const first = data.route[0] ?? data.cells[0];
+    const origin = { lat: first[1], lon: first[0], height: first[2] };
+    const group = new Group();
+    group.matrixAutoUpdate = false;
+    group.matrix.copy(this.enuFrame(origin));
+    const cells = routeCells(data, origin);
+    cells.userData.kind = "classes";
+    group.add(cells, routeTube(data, origin));
+    this.scene.add(group);
+    this.routeGroups.push(group);
+    return group;
+  }
+
+  setClassesVisible(visible: boolean): void {
+    this.classesWanted = visible;
+    this.applyClassVisibility();
+  }
+
+  private applyClassVisibility(): void {
+    const show = this.classesWanted && this.fp === null;
+    for (const g of this.routeGroups) {
+      for (const c of g.children) if (c.userData.kind === "classes") c.visible = show;
+    }
+  }
+
+  setRoutesVisible(visible: boolean): void {
+    for (const g of this.routeGroups) g.visible = visible;
+    this.applyClassVisibility();
   }
 
   private baseSphere(): Mesh {
@@ -192,6 +261,7 @@ export class MarsScene {
     const arrows = this.stopArrows(at, stopId);
     this.scene.add(arrows);
     this.fp = { mode: "pano", at, az: view.az, el: view.el, mesh, arrows, stopId };
+    this.setRoutesVisible(false);
     this.beginFirstPerson(MARS_SKY_COLOR, 70);
   }
 
@@ -199,6 +269,7 @@ export class MarsScene {
     const view = this.fp ?? { az: 0, el: -5 };
     this.leaveFirstPerson();
     this.fp = { mode: "walk", at: { ...at }, az: view.az, el: view.el };
+    this.setRoutesVisible(true);
     this.beginFirstPerson(MARS_SKY_COLOR, 70);
   }
 
@@ -211,6 +282,7 @@ export class MarsScene {
     this.camera.updateProjectionMatrix();
     this.controls.enabled = true;
     for (const o of this.overlays) o.visible = true;
+    this.setRoutesVisible(true);
     this.placeCamera({ ...at, height: at.height + 400 }, 0, -60);
   }
 

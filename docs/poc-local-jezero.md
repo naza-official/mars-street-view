@@ -139,3 +139,24 @@ npm test  27 passed; npm run build ok
 - **Bug fixed:** the first walk height was 6 m too high because the ground ray also hit L1, which is only hidden visually under L2. The probe now tries terrain finest-first.
 - **Screenshots:** `docs/poc/13_pano_arrows.png`, `14_next_stop.png` (partial POSTDRV panorama with a baked-in azimuth grid; L2 terrain shows through the gap), `15_walk.png`.
 - **Panorama quality varies by variant:** some (`POSTDRV`, `CLRREPR`) are partial or carry grid/tick overlays. A per-stop preference list (cleanest variant first) would help; for B.
+
+## Phase 7: PR #23 (B terrain classes + routes) on our data (2026-11-15)
+- **Merge:** `origin/b/terrain-seg` (PR #23, a superset of #11) merged locally. The conflicts were the same `ci.yml`/`pyproject.toml` extras; I took B's side, which has the same content. `pytest -q` → 142 passed. Nothing was merged on GitHub.
+- **L2 in the contract format** (`layers/l2_regional/site_layer.py`): what B's service reads. Site CRS (jezero local eqc), 0.25 m grey HiRISE ortho, 1 m DTM above the sphere (100 % HiRISE in this box). Box lon 77.40–77.47, lat 18.42–18.475 (3.9 × 3.3 km), built in 17 s at `~/mars-data/orbital/l2_regional/jezero_site/v1`, `common.validate` ok.
+- **Inputs from the user:** `momo_vitb16.pth` (448 MB) and `vector_db.npz` (1.7 MB) at the repo root. I copied them to `~/mars-data/models/momo/` and `~/mars-data/rover/l9_terrain_db/jezero/v1/`, and git-ignored the root copies.
+  - The npz is the **region-level** DB (`vector_db.py`: 595 representatives — soil 263, bedrock 27, sand 271, big rock 34; areas delta, deltaflat, floor, landing, seitah), not the patch-level one `package_db.py` packages. `corridor.py` reads only `embedding` + `label`, so it runs. Classifying patch tokens against region means may bias the classes (to check with B).
+  - B's `summary.json` was missing, so `db.json` was rebuilt: k = 3, `unknown_threshold_cosine` = 0.5451 (95th percentile of leave-one-out own-class distance, as `vector_db.py` computes it).
+- **ML env:** `uv venv ~/.venvs/msv-ml` + `ml/terrain_seg/requirements.txt` (CPU torch; corridor uses CUDA or CPU).
+- **Route** (B's demo endpoints, landing → Séítah edge, 300 m corridor):
+```
+python ml/terrain_seg/corridor.py --l2 ~/mars-data/orbital/l2_regional/jezero_site/v1 --start 77.45088 18.44463 --end 77.44229 18.43358 --width 300 --name oeb_seitah
+length 1051.1 m (straight 813.9), classes along route: soil 77 %, bedrock 6 %, sand 8 %, big rock 0 %, unknown 9 %
+tiles 11 computed live, 0 cached, ~100 s on CPU; cog_valid true
+```
+  B's run on a stand-in L2 (PLACES map) was 977 m / 79 % soil.
+- **Viewer:** `scripts/poc/route_to_viewer.py` turns the route outputs into `rover/l9_routes/jezero/v1/` (local, not a contract layer): route vertices + 45,056 class cells, heights from the site L2 DTM, `common.validate` ok.
+  - Drawn as a white 1.2 m tube for the route, with 4 × 4 m class tiles in B's legend colours (an always-on-top overlay, orbit view only, with a checkbox), plus a legend with the route length.
+  - In walk mode only the route tube shows.
+  - `npm test` 30 passed.
+- **Screenshots:** `docs/poc/16_route_overview.png` (classes + route + real traverse), `17_route_walk.png`, `18_route_preview_b.png` (B's own preview from this run).
+- **Why the class tiles are always on top:** depth-tested class tiles had holes, because coarse L2 levels seen from 1 km+ sit metres above the DTM-sampled cells.

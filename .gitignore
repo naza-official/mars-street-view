@@ -14,3 +14,8 @@ logs/
 
 # local review material (images for manual grading), never committed
 review/
+
+# local model weights / data dropped at the repo root
+/momo_vitb16.pth
+/vector_db.npz
+*.pth

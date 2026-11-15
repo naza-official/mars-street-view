@@ -16,3 +16,8 @@ body.street .readout { display: none; }
 .stop-select { font: inherit; font-size: 12px; padding: 4px; border-radius: 6px; background: #1d1612; color: #f2e6da; border: 1px solid #6b4a36; max-width: 100%; }
 .hint { display: none; position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); padding: 6px 12px; border-radius: 6px; background: rgba(12, 12, 16, 0.7); font-size: 12px; text-align: center; max-width: calc(100vw - 32px); }
 body.street .hint { display: block; }
+.route-legend { margin-top: 8px; font-size: 12px; }
+.route-title { margin-bottom: 4px; }
+.legend-item { display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; }
+.legend-item i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+.legend-toggle { display: block; margin-bottom: 4px; cursor: pointer; }

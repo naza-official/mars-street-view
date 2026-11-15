@@ -7,6 +7,8 @@ import { MarsScene } from "./scene";
 import { parsePosesCsv } from "./traverse";
 import { StreetView, loadStops } from "./street";
 import { fetchFresh } from "./catalog";
+import { RouteData, routeAssets, routeLength } from "./route";
+import { MARS_RADIUS_M } from "./geo";
 
 const TERRAIN_RANK: Record<string, number> = { l1_global: 1, l2_regional: 2 };
 const DATA_BASE: string = import.meta.env.VITE_DATA_BASE ?? "";
@@ -78,6 +80,35 @@ async function addTraverse(mars: MarsScene, layer: ResolvedLayer): Promise<void>
   if (res.ok) mars.addTraverse(parsePosesCsv(await res.text()));
 }
 
+async function addRoutes(mars: MarsScene, layer: ResolvedLayer, panel: HTMLElement): Promise<void> {
+  for (const asset of routeAssets(layer.layer.assets)) {
+    const res = await fetchFresh(`${layer.baseUrl}${asset}`);
+    if (!res.ok) continue;
+    const data = (await res.json()) as RouteData;
+    mars.addRoute(data);
+    panel.appendChild(routeLegend(mars, data));
+  }
+}
+
+function routeLegend(mars: MarsScene, data: RouteData): HTMLElement {
+  const box = el("div", { class: "route-legend" });
+  const km = routeLength(data.route, (MARS_RADIUS_M * Math.PI) / 180) / 1000;
+  box.appendChild(el("div", { class: "route-title" }, `Route ${data.name}: ${km.toFixed(2)} km`));
+  const toggle = el("label", { class: "legend-toggle" });
+  const box2 = el("input", { type: "checkbox", checked: "" });
+  box2.addEventListener("change", () => mars.setClassesVisible(box2.checked));
+  toggle.append(box2, document.createTextNode(" terrain classes"));
+  box.appendChild(toggle);
+  for (const [, [label, colour]] of Object.entries(data.legend)) {
+    const row = el("span", { class: "legend-item" });
+    const swatch = el("i");
+    swatch.style.background = colour;
+    row.append(swatch, document.createTextNode(label));
+    box.appendChild(row);
+  }
+  return box;
+}
+
 async function loadLayers(
   mars: MarsScene, street: StreetView, list: HTMLElement, panel: HTMLElement,
 ): Promise<void> {
@@ -96,6 +127,7 @@ async function loadLayers(
     }
     mars.setTerrain(terrain.sort((a, b) => b.rank - a.rank).map((t) => t.tiles));
     await Promise.all(layers.map((l) => addTraverse(mars, l)));
+    await Promise.all(layers.map((l) => addRoutes(mars, l, panel)));
     street.setStops(await loadStops(layers));
     streetPanel(street, panel);
     showLayers(list, layers, errors);
