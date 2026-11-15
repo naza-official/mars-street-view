@@ -29,3 +29,36 @@ shares are reported in 0-5 / 5-15 / 15-30 m bands without any map projection.
 
 Known limits: domain shift (camera, colour, illumination), crowd labels are coarse polygons, and the
 rare `big_rock` class is the weakest.
+
+## Orbital propagation prototype (status Nov 2026)
+
+Rover evidence (Navcam frames -> AI4Mars model -> ray cast on the PLACES DEM) labels map regions in
+five 400 x 400 m windows of the PLACES orbital map: landing (sols 1-44), seitah (200-260),
+delta (440-470), floor (130-160), deltaflat (600-640). A per-class vector database of MOMO
+embeddings classifies every region/patch: mean cosine distance to the k=3 nearest representatives
+of each class, smallest wins.
+
+```bash
+python ml/terrain_seg/fetch_navcam_meta.py --name NAME --sol-min A --sol-max B
+python ml/terrain_seg/evidence_grid.py --name NAME --sol-min A --sol-max B
+python ml/terrain_seg/fetch_map_window.py --name NAME
+python ml/terrain_seg/vector_db.py --areas landing seitah delta floor deltaflat        # regions
+python ml/terrain_seg/vector_db_patch.py --areas landing seitah delta floor deltaflat  # 4 m patches
+```
+
+Leave-one-area-out (each area classified with a database built only from the other four):
+
+| area | region DB acc / majority | patch DB acc / majority | bedrock recall region -> patch |
+|---|---|---|---|
+| landing | 0.67 / 0.76 | 0.62 / 0.74 | - / 0.38 |
+| seitah | 0.73 / 0.83 | 0.63 / 0.65 | 0.33 / 0.33 |
+| delta | 0.82 / 0.48 | 0.75 / 0.51 | 0.00 / 0.14 |
+| floor | 0.55 / 0.54 | 0.57 / 0.54 | 0.25 / 0.55 |
+| deltaflat | 0.60 / 0.49 | 0.48 / 0.47 | 0.00 / 0.35 |
+
+Reading: sand transfers well between areas (recall 0.7-0.9 on delta and Seitah); patch-level
+representatives are the only way bedrock and big rocks get recalled at all; neither variant beats
+the majority class everywhere. Bottlenecks: the rover model calls Perseverance light-toned
+bedrock "soil" (domain shift from Curiosity), and orbital texture at 0.25 m does not resolve the
+rover-scale classes. Next: orbital-scale classes, fine-tuning a head on MOMO, more areas on AWS.
+MOMO patch tokens are position-debiased (MAE tokens encode position-in-crop).
