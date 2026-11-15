@@ -34,3 +34,29 @@ export function routeLength(points: RoutePoint[], metresPerDeg: number): number 
   }
   return total;
 }
+
+export interface ClassMapData {
+  name: string;
+  legend: Record<string, [string, string]>;
+  texture: string;
+  cols: number;
+  rows: number;
+  u: number[];
+  v: number[];
+  vertices: number[];
+}
+
+export function classMapAssets(assets: Record<string, string>): string[] {
+  return Object.entries(assets).filter(([k]) => k.endsWith("_classmap")).map(([, v]) => v);
+}
+
+export function gridIndex(cols: number, rows: number): number[] {
+  const index: number[] = [];
+  for (let r = 0; r < rows - 1; r++) {
+    for (let c = 0; c < cols - 1; c++) {
+      const a = r * cols + c;
+      index.push(a, a + cols, a + 1, a + 1, a + cols, a + cols + 1);
+    }
+  }
+  return index;
+}

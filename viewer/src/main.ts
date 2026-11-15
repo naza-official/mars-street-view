@@ -7,7 +7,7 @@ import { MarsScene } from "./scene";
 import { parsePosesCsv } from "./traverse";
 import { StreetView, loadStops } from "./street";
 import { fetchFresh } from "./catalog";
-import { RouteData, routeAssets, routeLength } from "./route";
+import { ClassMapData, RouteData, classMapAssets, routeAssets, routeLength } from "./route";
 import { MARS_RADIUS_M } from "./geo";
 
 const TERRAIN_RANK: Record<string, number> = { l1_global: 1, l2_regional: 2 };
@@ -81,11 +81,16 @@ async function addTraverse(mars: MarsScene, layer: ResolvedLayer): Promise<void>
 }
 
 async function addRoutes(mars: MarsScene, layer: ResolvedLayer, panel: HTMLElement): Promise<void> {
+  const maps = classMapAssets(layer.layer.assets);
+  for (const asset of maps) {
+    const res = await fetchFresh(`${layer.baseUrl}${asset}`);
+    if (res.ok) await mars.addClassMap((await res.json()) as ClassMapData, layer.baseUrl);
+  }
   for (const asset of routeAssets(layer.layer.assets)) {
     const res = await fetchFresh(`${layer.baseUrl}${asset}`);
     if (!res.ok) continue;
     const data = (await res.json()) as RouteData;
-    mars.addRoute(data);
+    mars.addRoute(data, maps.length === 0);
     panel.appendChild(routeLegend(mars, data));
   }
 }

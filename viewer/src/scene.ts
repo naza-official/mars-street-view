@@ -1,7 +1,7 @@
 import {
   BufferGeometry, DoubleSide, Float32BufferAttribute, Group, Line, LineBasicMaterial, Mesh,
   CatmullRomCurve3, Color, InstancedMesh, MeshBasicMaterial, Object3D, PlaneGeometry, Shape,
-  ShapeGeometry, TubeGeometry,
+  Material, NearestFilter, SRGBColorSpace, ShapeGeometry, TextureLoader, TubeGeometry,
   SphereGeometry, Matrix4, PerspectiveCamera, Raycaster, Scene, Vector2, Vector3, WebGLRenderer,
 } from "three";
 import { CAMERA_FRAME, Ellipsoid, GlobeControls, TilesRenderer } from "3d-tiles-renderer";
@@ -10,7 +10,7 @@ import { flightDuration, flightPoint } from "./flight";
 import { TraversePoint } from "./traverse";
 import { LonLatBox, clipObject, clipUniform } from "./clip";
 import { PanoInfo, loadPanoMesh } from "./pano";
-import { RouteData, RoutePoint, classColor } from "./route";
+import { ClassMapData, RouteData, RoutePoint, classColor, gridIndex } from "./route";
 import {
   ARROW_RANGE_M, EYE_HEIGHT_M, MoveInput, StopPoint, localOffset, nearbyStops, step,
 } from "./walk";
@@ -34,6 +34,24 @@ const CELL_LIFT_M = 1.5;
 function enuPoint(origin: Cartographic, p: RoutePoint, lift: number): Vector3 {
   const { north, east } = localOffset(origin, { lat: p[1], lon: p[0], height: p[2] });
   return new Vector3(east, north, p[2] - origin.height + lift);
+}
+
+function classMapGeometry(data: ClassMapData, origin: Cartographic): BufferGeometry {
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const v = data.vertices;
+  for (let r = 0; r < data.rows; r++) {
+    for (let c = 0; c < data.cols; c++) {
+      const k = (r * data.cols + c) * 3;
+      pos.push(...enuPoint(origin, [v[k], v[k + 1], v[k + 2], 0], CELL_LIFT_M).toArray());
+      uv.push(data.u[c], data.v[r]);
+    }
+  }
+  const g = new BufferGeometry();
+  g.setAttribute("position", new Float32BufferAttribute(pos, 3));
+  g.setAttribute("uv", new Float32BufferAttribute(uv, 2));
+  g.setIndex(gridIndex(data.cols, data.rows));
+  return g;
 }
 
 function routeCells(data: RouteData, origin: Cartographic): InstancedMesh {
@@ -60,6 +78,8 @@ function routeTube(data: RouteData, origin: Cartographic): Mesh {
   const geometry = new TubeGeometry(path, Math.max(64, pts.length * 4), 1.2, 6, false);
   const mesh = new Mesh(geometry, new MeshBasicMaterial({ color: 0xffffff }));
   mesh.frustumCulled = false;
+  mesh.renderOrder = 12;
+  mesh.userData.kind = "route";
   return mesh;
 }
 
@@ -162,15 +182,41 @@ export class MarsScene {
     return line;
   }
 
-  addRoute(data: RouteData): Group {
+  async addClassMap(data: ClassMapData, baseUrl: string): Promise<Group> {
+    const texture = await new TextureLoader().loadAsync(`${baseUrl}${data.texture}`);
+    texture.magFilter = NearestFilter;
+    texture.colorSpace = SRGBColorSpace;
+    const v = data.vertices;
+    const origin = { lon: v[0], lat: v[1], height: v[2] };
+    const group = new Group();
+    group.matrixAutoUpdate = false;
+    group.matrix.copy(this.enuFrame(origin));
+    const mesh = new Mesh(classMapGeometry(data, origin), new MeshBasicMaterial({
+      map: texture, transparent: true, opacity: 0.5, depthTest: false, depthWrite: false,
+      side: DoubleSide,
+    }));
+    mesh.renderOrder = 9;
+    mesh.frustumCulled = false;
+    mesh.userData.kind = "classes";
+    group.add(mesh);
+    this.scene.add(group);
+    this.routeGroups.push(group);
+    this.applyClassVisibility();
+    return group;
+  }
+
+  addRoute(data: RouteData, withCells = true): Group {
     const first = data.route[0] ?? data.cells[0];
     const origin = { lat: first[1], lon: first[0], height: first[2] };
     const group = new Group();
     group.matrixAutoUpdate = false;
     group.matrix.copy(this.enuFrame(origin));
-    const cells = routeCells(data, origin);
-    cells.userData.kind = "classes";
-    group.add(cells, routeTube(data, origin));
+    group.add(routeTube(data, origin));
+    if (withCells) {
+      const cells = routeCells(data, origin);
+      cells.userData.kind = "classes";
+      group.add(cells);
+    }
     this.scene.add(group);
     this.routeGroups.push(group);
     return group;
@@ -184,7 +230,10 @@ export class MarsScene {
   private applyClassVisibility(): void {
     const show = this.classesWanted && this.fp === null;
     for (const g of this.routeGroups) {
-      for (const c of g.children) if (c.userData.kind === "classes") c.visible = show;
+      for (const c of g.children) {
+        if (c.userData.kind === "classes") c.visible = show;
+        if (c.userData.kind === "route") ((c as Mesh).material as Material).depthTest = this.fp !== null;
+      }
     }
   }
 

@@ -160,3 +160,17 @@ tiles 11 computed live, 0 cached, ~100 s on CPU; cog_valid true
   - `npm test` 30 passed.
 - **Screenshots:** `docs/poc/16_route_overview.png` (classes + route + real traverse), `17_route_walk.png`, `18_route_preview_b.png` (B's own preview from this run).
 - **Why the class tiles are always on top:** depth-tested class tiles had holes, because coarse L2 levels seen from 1 km+ sit metres above the DTM-sampled cells.
+
+## Phase 8: terrain classes for the whole HiRISE square (2026-11-15)
+- **What the overlay is:** B's terrain classes. Each 4 × 4 m cell of the 0.25 m HiRISE ortho becomes a MOMO ViT-B/16 patch embedding, classified by the mean cosine distance to the 3 nearest rover-labelled examples per class in `vector_db.npz`. Colours: soil tan, bedrock blue, sand yellow, big rock red, unknown grey (farther than the 0.545 threshold from every class). The route service only classifies the 256 m tiles a corridor touches.
+- **Whole square:** `scripts/poc/classify_area.py` runs B's `classify_tile` over every 256 m tile that fits inside the contract-format L2 with its 28 m context margin. That's 14 × 12 = 168 tiles, 3.58 × 3.07 km, on Apple MPS (B's code uses CUDA or CPU; MPS ~2.5 s/tile). The tile cache is shared with the route service.
+```
+tiles 168: computed 154, cached 14; 520 s on mps
+area shares: soil 24.5 %, bedrock 3.2 %, sand 36.2 %, big rock 8.9 %, unknown 27.3 %
+```
+- **Viewer:** `scripts/poc/classmap_to_viewer.py` writes `area.png` (RGBA, 896 × 768 px = 4 m cells), `area.json` (a 225 × 193 vertex grid at 16 m, heights from the site DTM) and `area.tif` (COG) into `rover/l9_routes/jezero/v1/`; `common.validate` ok. Drawn as one textured, terrain-following mesh (always on top, orbit view, same checkbox); it replaces the corridor-only cells. `npm test` 31 passed.
+- **Screenshots:** `docs/poc/19_classmap_top.png`, `20_classmap_oblique.png`.
+- **Observations:**
+  - The classes follow real features: sand floors in small craters, big rock on crater rims and on the isolated hill (west), the Séítah ridges/ripple field (centre).
+  - 256 m tile seams are visible, because tokens are centred per tile and neighbouring tiles are classified independently (B's known limit).
+  - 27 % unknown away from the five areas in the database.
