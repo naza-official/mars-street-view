@@ -6,6 +6,15 @@ import { CAMERA_FRAME, Ellipsoid, GlobeControls, TilesRenderer } from "3d-tiles-
 import { Cartographic, MARS_RADIUS_M, toDeg, toRad } from "./geo";
 import { flightDuration, flightPoint } from "./flight";
 import { TraversePoint } from "./traverse";
+import { LonLatBox, clipObject, clipUniform } from "./clip";
+import { PanoInfo, loadPanoMesh } from "./pano";
+
+interface PanoState {
+  mesh: Mesh;
+  at: Cartographic;
+  az: number;
+  el: number;
+}
 
 const BASE_SPHERE_DEPTH_M = 9_000;
 const FLOOR_RADIUS_M = MARS_RADIUS_M - BASE_SPHERE_DEPTH_M;
@@ -29,6 +38,7 @@ export class MarsScene {
   private last = performance.now();
   private readonly raycaster = new Raycaster();
   private flight: Flight | null = null;
+  private pano: PanoState | null = null;
   private readonly frame = new Matrix4();
 
   constructor(canvasParent: HTMLElement) {
@@ -41,13 +51,17 @@ export class MarsScene {
     this.controls.setEllipsoid(this.floor, this.scene);
     (this.raycaster as Raycaster & { firstHitOnly?: boolean }).firstHitOnly = true;
     this.scene.add(this.baseSphere());
-    this.placeCamera({ lat: 18.4, lon: 77.5, height: 3 * MARS_RADIUS_M });
+    this.placeCamera({ lat: 18.4, lon: 77.5, height: 150_000 });
     this.resize();
     window.addEventListener("resize", () => this.resize());
   }
 
-  addTileset(url: string): TilesRenderer {
+  addTileset(url: string, clipBoxes: LonLatBox[] = []): TilesRenderer {
     const tiles = new TilesRenderer(url);
+    if (clipBoxes.length) {
+      const boxes = clipUniform(clipBoxes);
+      tiles.addEventListener("load-model", ({ scene }) => clipObject(scene, boxes));
+    }
     tiles.ellipsoid.copy(this.ellipsoid);
     tiles.errorTarget = 12;
     tiles.setCamera(this.camera);
@@ -109,6 +123,54 @@ export class MarsScene {
     return { lat: toDeg(c.lat), lon: toDeg(c.lon), height: c.height };
   }
 
+  get inPano(): boolean {
+    return this.pano !== null;
+  }
+
+  async enterPano(info: PanoInfo, baseUrl: string): Promise<void> {
+    this.exitPano(false);
+    const c = info.camera;
+    const at = { lat: c.lat_n, lon: c.lon_e, height: c.height_above_sphere_m };
+    const enu = this.ellipsoid.getEastNorthUpFrame(
+      toRad(at.lat), toRad(at.lon), at.height, new Matrix4());
+    const mesh = await loadPanoMesh(info, baseUrl, enu);
+    this.scene.add(mesh);
+    this.flight = null;
+    this.controls.enabled = false;
+    this.pano = { mesh, at, az: 0, el: 0 };
+    this.camera.fov = 70;
+  }
+
+  exitPano(toOrbit = true): void {
+    if (!this.pano) return;
+    const { mesh, at } = this.pano;
+    this.scene.remove(mesh);
+    mesh.geometry.dispose();
+    this.pano = null;
+    this.camera.fov = 50;
+    this.camera.updateProjectionMatrix();
+    this.controls.enabled = true;
+    if (toOrbit) this.placeCamera({ ...at, height: at.height + 400 }, 0, -60);
+  }
+
+  lookPano(dAz: number, dEl: number): void {
+    if (!this.pano) return;
+    this.pano.az = (this.pano.az + dAz + 360) % 360;
+    this.pano.el = Math.max(-85, Math.min(85, this.pano.el + dEl));
+  }
+
+  zoomPano(dFov: number): void {
+    this.camera.fov = Math.max(15, Math.min(100, this.camera.fov + dFov));
+  }
+
+  private stepPano(): void {
+    if (!this.pano) return;
+    this.placeCamera(this.pano.at, this.pano.az, this.pano.el);
+    this.camera.near = 0.05;
+    this.camera.far = 2_000_000;
+    this.camera.updateProjectionMatrix();
+  }
+
   start(): void {
     this.renderer.setAnimationLoop(() => this.tick());
   }
@@ -128,7 +190,8 @@ export class MarsScene {
     const dt = (now - this.last) / 1000;
     this.last = now;
     this.stepFlight(now);
-    if (!this.flight) this.controls.update(dt);
+    if (this.pano) this.stepPano();
+    else if (!this.flight) this.controls.update(dt);
     this.camera.updateMatrixWorld();
     for (const tiles of this.tilesets) tiles.update();
     this.renderer.render(this.scene, this.camera);
