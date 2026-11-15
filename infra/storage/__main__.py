@@ -8,10 +8,19 @@ REGION = "us-west-2"
 BUCKET_NAME = f"mars-sv-{ACCOUNT_ID}"
 TAGS = {"project": "mars-sv", "milestone": "M3", "stack": "storage"}
 PUBLISHED_PREFIXES = ("orbital", "rover")
-READ_PREFIXES = ("orbital", "rover", "catalog")
+READ_PREFIXES = ("orbital", "rover", "catalog", "viewer")
 WORK_EXPIRY_DAYS = 14
 LOG_GROUP = "/msv/build"
 LOG_RETENTION_DAYS = 30
+VIEWER_FUNCTION = """function handler(event) {
+  var uri = event.request.uri;
+  if (uri === "/" || uri === "/viewer") {
+    return {statusCode: 302, statusDescription: "Found", headers: {location: {value: "/viewer/"}}};
+  }
+  if (uri.endsWith("/")) { event.request.uri = uri + "index.html"; }
+  return event.request;
+}
+"""
 
 config = pulumi.Config()
 provider = aws.Provider(
@@ -82,18 +91,39 @@ def cors(bucket: aws.s3.Bucket, origins: list[str]) -> None:
     )
 
 
+def viewer_function() -> aws.cloudfront.Function:
+    return aws.cloudfront.Function(
+        "viewer-index", name="msv-viewer-index", runtime="cloudfront-js-2.0",
+        comment="/ -> /viewer/; directory URIs -> index.html", publish=True,
+        code=VIEWER_FUNCTION, opts=opts,
+    )
+
+
+def catalog_behavior(origin_request: pulumi.Output, headers: pulumi.Output) -> dict:
+    no_cache = aws.cloudfront.get_cache_policy_output(name="Managed-CachingDisabled", opts=invoke)
+    return {
+        "path_pattern": "catalog/*", "target_origin_id": "bucket",
+        "viewer_protocol_policy": "redirect-to-https",
+        "allowed_methods": ["GET", "HEAD", "OPTIONS"], "cached_methods": ["GET", "HEAD"],
+        "compress": True, "cache_policy_id": no_cache.id,
+        "origin_request_policy_id": origin_request.id,
+        "response_headers_policy_id": headers.id,
+    }
+
+
 def cdn(bucket: aws.s3.Bucket) -> aws.cloudfront.Distribution:
     oac = aws.cloudfront.OriginAccessControl(
         "oac", name="msv-bucket-oac", origin_access_control_origin_type="s3",
         signing_behavior="always", signing_protocol="sigv4", opts=opts,
     )
+    index = viewer_function()
     cache = aws.cloudfront.get_cache_policy_output(name="Managed-CachingOptimized", opts=invoke)
     origin_request = aws.cloudfront.get_origin_request_policy_output(
         name="Managed-CORS-S3Origin", opts=invoke)
     headers = aws.cloudfront.get_response_headers_policy_output(
         name="Managed-SimpleCORS", opts=invoke)
     return aws.cloudfront.Distribution(
-        "cdn", enabled=True, comment="msv public read (orbital, rover, catalog)",
+        "cdn", enabled=True, comment="msv public read (orbital, rover, catalog, viewer)",
         price_class="PriceClass_100", is_ipv6_enabled=True,
         origins=[{"origin_id": "bucket", "domain_name": bucket.bucket_regional_domain_name,
                   "origin_access_control_id": oac.id}],
@@ -103,7 +133,9 @@ def cdn(bucket: aws.s3.Bucket) -> aws.cloudfront.Distribution:
             "compress": True, "cache_policy_id": cache.id,
             "origin_request_policy_id": origin_request.id,
             "response_headers_policy_id": headers.id,
+            "function_associations": [{"event_type": "viewer-request", "function_arn": index.arn}],
         },
+        ordered_cache_behaviors=[catalog_behavior(origin_request, headers)],
         restrictions={"geo_restriction": {"restriction_type": "none"}},
         viewer_certificate={"cloudfront_default_certificate": True},
         opts=opts,
@@ -156,3 +188,4 @@ pulumi.export("log_group", logs.name)
 if distribution:
     pulumi.export("cdn_domain", distribution.domain_name)
     pulumi.export("cdn_id", distribution.id)
+    pulumi.export("viewer_url", distribution.domain_name.apply(lambda d: f"https://{d}/viewer/"))

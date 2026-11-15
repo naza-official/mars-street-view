@@ -12,6 +12,10 @@ USGS_BUCKETS = ("astrogeo-ard", "asc-pds-services", "asc-astropedia")
 SSM_CORE_ARN = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 BUILD_ROLE = "msv-build"
 TAGS = {"project": "mars-sv", "milestone": "M3", "stack": "iam"}
+GITHUB_REPO = "naza-official/mars-street-view"
+GITHUB_OIDC_URL = "token.actions.githubusercontent.com"
+VIEWER_DEPLOY_ROLE = "msv-viewer-deploy"
+VIEWER_PREFIX = "viewer"
 LANE_PREFIXES = {
     "a": ("orbital", "catalog", "work"),
     "b": ("rover", "catalog", "work"),
@@ -95,10 +99,62 @@ def build_profile(lane_a: aws.iam.Policy) -> aws.iam.InstanceProfile:
     return aws.iam.InstanceProfile("build-profile", name=BUILD_ROLE, role=role.name, opts=opts)
 
 
+def github_oidc_provider_arn() -> pulumi.Input[str]:
+    existing = config.get("github_oidc_provider_arn")
+    if existing:
+        return existing
+    return aws.iam.OpenIdConnectProvider(
+        "github-oidc", url=f"https://{GITHUB_OIDC_URL}", client_id_lists=["sts.amazonaws.com"],
+        opts=opts,
+    ).arn
+
+
+def viewer_trust_document(provider_arn: str) -> str:
+    return json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow", "Action": "sts:AssumeRoleWithWebIdentity",
+            "Principal": {"Federated": provider_arn},
+            "Condition": {"StringEquals": {
+                f"{GITHUB_OIDC_URL}:aud": "sts.amazonaws.com",
+                f"{GITHUB_OIDC_URL}:sub": f"repo:{GITHUB_REPO}:ref:refs/heads/main",
+            }},
+        }],
+    })
+
+
+def viewer_deploy_document() -> dict:
+    return {
+        "Version": "2012-10-17",
+        "Statement": [
+            {"Sid": "ListViewer", "Effect": "Allow", "Action": "s3:ListBucket",
+             "Resource": f"arn:aws:s3:::{BUCKET_NAME}",
+             "Condition": {"StringLike": {"s3:prefix": [f"{VIEWER_PREFIX}/*"]}}},
+            {"Sid": "WriteViewer", "Effect": "Allow",
+             "Action": ["s3:PutObject", "s3:DeleteObject", "s3:GetObject"],
+             "Resource": object_arns(BUCKET_NAME, (VIEWER_PREFIX,))},
+        ],
+    }
+
+
+def viewer_deploy_role() -> aws.iam.Role:
+    role = aws.iam.Role(
+        "viewer-deploy-role", name=VIEWER_DEPLOY_ROLE, permissions_boundary=BOUNDARY_ARN,
+        assume_role_policy=pulumi.Output.from_input(github_oidc_provider_arn()).apply(
+            viewer_trust_document),
+        max_session_duration=3600, opts=opts,
+    )
+    aws.iam.RolePolicy("viewer-deploy-inline", role=role.id,
+                       policy=json.dumps(viewer_deploy_document()), opts=opts)
+    return role
+
+
 lanes = {lane: lane_policy(lane) for lane in LANE_PREFIXES}
 profile = build_profile(lanes["a"])
+viewer_role = viewer_deploy_role()
 
 pulumi.export("lane_a_policy_arn", lanes["a"].arn)
 pulumi.export("lane_b_policy_arn", lanes["b"].arn)
 pulumi.export("build_instance_profile_arn", profile.arn)
 pulumi.export("build_instance_profile_name", profile.name)
+pulumi.export("viewer_deploy_role_arn", viewer_role.arn)
