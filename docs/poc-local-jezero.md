@@ -31,6 +31,8 @@ $ npx 3d-tiles-validator@0.6.1 --tilesetFile .../tileset.json
 ## Phase 2: rover layers (PR #11)
 - L3: `layers/l3_poses/fetch.py` (PLACES + MMGIS) then `build.py` → `rover/l3_poses/jezero/v1/` (33,458 poses; MMGIS horizontal max 0.011 m, height p95 4.6 m — same as B's README).
 - L4: `layers/l4_streetview/fetch.py --site-config configs/rover/jezero.yaml` (no `--frames`, ~4.3 GB). **Finding (B):** the default `--site-config` is `configs/sites/jezero.yaml`, which has no `pilot_stop` → `KeyError: 'pilot_stop'`.
+- L4 build: `layers/l4_streetview/build.py` → `rover/l4_streetview/jezero/v1/` in 31 s: 1 stop, 8 NLFC wedges, 345,056 triangles, bbox [-136, -87, -0.3]..[163, 146, 6.2] m in stop ENU, 35 MB total. `common.validate`: ok. `3d-tiles-validator` on the stop tileset: 0 errors, 0 warnings (infos: NPOT 1280x960 textures). `alignment_rms_m` is null (pc_align pending, needs L2).
+- `MSV_DATA=~/mars-data pytest -q tests/rover` → `25 passed, 3 skipped` (built-layer checks now run).
 - L6: skipped (tables only, nothing to place in 3D).
 
 ## Phase 3: height check (L3 poses vs L1 DTM)
@@ -51,3 +53,32 @@ jezero {"cam":{"lat":18.4,"lon":77.5,"height":120000}, tiles visible 1}  readout
 oeb    {"cam":{"lat":18.4446,"lon":77.4509,"height":3000}, tiles loaded 5} readout: 18.4446°N  77.4509°E  -4247 m
 ```
 Screenshots: `docs/poc/02_jezero.png` (crater with MDIM texture), `docs/poc/03_oeb.png` (traverse over L1).
+
+- **Viewer bug found and fixed:** Jezero's floor is ~4.25 km *below* the 3,396,190 m datum, so every close-up camera sits inside the sphere `GlobeControls` uses. Its clip planes and fallback ray hit then go wrong (nothing rendered, readout on the far side of the sphere). Fix: the controls use a "floor" sphere 9 km below the datum (below Hellas); readout, fly-to and cartographic maths stay on the datum sphere. `placeCamera` takes azimuth/elevation.
+- Stop close-ups (camera 245 m south of the stop, 60 m up, looking north 25° down):
+```
+06_mesh_only   (L1 hidden): tiles visible [L1 2, L4 1] — 8 wedges radiate ~150 m around the start of the traverse
+07_mesh_on_l1  (L1 shown):  tiles visible [L1 2, L4 1] — mesh fully hidden under L1
+```
+Screenshots: `docs/poc/05_stop_oblique.png`, `docs/poc/06_mesh_only.png`, `docs/poc/07_mesh_on_l1.png`. Scripts: `scripts/poc/screens/shot.mjs`, `shot3.mjs` (playwright-core 1.64.1 + installed Chrome).
+
+## Findings
+1. **Rover content is buried in L1.** At the stop L1 is 3.9 m above the pose and the mesh rises only ~6 m; in the box L1 differs from poses by median -9.7 m, p95 46 m. L1 (463 m MOLA) cannot carry street-level content. Needs L2 (M6) and B's `pc_align` (`alignment_rms_m`). Until then the viewer could hide orbital terrain near a stop or draw rover tiles on top.
+2. **Below-datum cameras** break GlobeControls with the datum sphere → fixed with a floor sphere (above). Applies to the real viewer (M5), not only the PoC.
+3. **L4 mesh colour** renders as flat olive/yellow, not Navcam greyscale/colour; likely a material/texture issue in `stop.glb` (unlit vs vertex colours). To check with B.
+4. **L4 fetch default config** (`configs/sites/jezero.yaml`) has no `pilot_stop` → `KeyError`; works with `--site-config configs/rover/jezero.yaml`. For B.
+5. **L4 `layer.json` has no `tileset` asset**, only `<stop>_tileset`; the viewer now loads both forms. Worth writing into the contract with #22.
+6. **`planetarymaps.usgs.gov` URLs fail in GDAL `/vsicurl/`** (302); the direct `asc-pds-services` S3 HTTPS URL works anonymously. Useful for M6 (no credentials needed for USGS reads).
+7. **MDIM at close range** is very dark and blurry (232 m); expected, L2 HiRISE replaces it.
+
+## How to run it again
+```
+python3 -m http.server 8000 --bind 127.0.0.1 -d ~/mars-data          # data
+cd viewer && MSV_DATA_ORIGIN=http://127.0.0.1:8000 npx vite --port 5173   # viewer
+open http://localhost:5173/viewer/        # Jezero / OEB landing buttons
+```
+
+## Next
+- Feed findings 1, 3, 4, 5 to Person B (#11, #22).
+- M6: reuse `layers/l1_global/region.py`'s windowed `/vsicurl/` read for the HiRISE/CTX clips; L2 is what makes the stop sit on terrain.
+- M5: the floor-sphere fix and multi-tileset loading go into the viewer PR.
