@@ -1,4 +1,5 @@
 import { Vector2 } from "three";
+import type { TilesRenderer } from "3d-tiles-renderer";
 import "./style.css";
 import { resolveCatalog, ResolvedLayer } from "./catalog";
 import { SITES, Site, formatCartographic } from "./geo";
@@ -83,16 +84,16 @@ async function loadLayers(
     const { layers, errors } = await resolveCatalog((u) => fetch(u), DATA_BASE);
     const detail = layers.filter((l) => TERRAIN_RANK[l.layer.layer] === 2)
       .map((l) => l.layer.bounds_lonlat);
-    const terrain = [];
+    const terrain: { rank: number; tiles: TilesRenderer }[] = [];
     for (const l of layers) {
       const rank = TERRAIN_RANK[l.layer.layer];
       const clip = rank === 1 ? detail : [];
       for (const url of l.tilesetUrls) {
         const tiles = mars.addTileset(url, clip);
-        if (rank) terrain.push(tiles);
+        if (rank) terrain.push({ rank, tiles });
       }
     }
-    mars.setTerrain(terrain);
+    mars.setTerrain(terrain.sort((a, b) => b.rank - a.rank).map((t) => t.tiles));
     await Promise.all(layers.map((l) => addTraverse(mars, l)));
     street.setStops(await loadStops(layers));
     streetPanel(street, panel);

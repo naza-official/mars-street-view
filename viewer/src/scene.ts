@@ -1,6 +1,6 @@
 import {
   BufferGeometry, DoubleSide, Float32BufferAttribute, Group, Line, LineBasicMaterial, Mesh,
-  MeshBasicMaterial, Shape, ShapeGeometry,
+  MeshBasicMaterial, Object3D, Shape, ShapeGeometry,
   SphereGeometry, Matrix4, PerspectiveCamera, Raycaster, Scene, Vector2, Vector3, WebGLRenderer,
 } from "three";
 import { CAMERA_FRAME, Ellipsoid, GlobeControls, TilesRenderer } from "3d-tiles-renderer";
@@ -29,17 +29,17 @@ const GROUND_PROBE_M = 500;
 
 function arrowMesh(azDeg: number, dist: number, stopId: string): Mesh {
   const shape = new Shape();
-  shape.moveTo(0, 0.9);
-  shape.lineTo(0.7, -0.4);
-  shape.lineTo(0, -0.1);
-  shape.lineTo(-0.7, -0.4);
+  shape.moveTo(0, 0.35);
+  shape.lineTo(0.3, -0.15);
+  shape.lineTo(0, -0.03);
+  shape.lineTo(-0.3, -0.15);
   shape.closePath();
   const material = new MeshBasicMaterial({
-    color: 0xffffff, transparent: true, opacity: 0.85, depthTest: false, side: DoubleSide,
+    color: 0xffffff, transparent: true, opacity: 0.75, depthTest: false, side: DoubleSide,
   });
   const mesh = new Mesh(new ShapeGeometry(shape), material);
   const az = toRad(azDeg);
-  const r = Math.min(8, 3 + dist / 40);
+  const r = Math.min(6, 3 + dist / 100);
   mesh.position.set(Math.sin(az) * r, Math.cos(az) * r, -EYE_HEIGHT_M);
   mesh.rotation.z = -az;
   mesh.renderOrder = 30;
@@ -73,6 +73,7 @@ export class MarsScene {
   private flight: Flight | null = null;
   private fp: FirstPerson | null = null;
   private terrain: TilesRenderer[] = [];
+  private readonly overlays: Object3D[] = [];
   private stops: StopPoint[] = [];
   private move: MoveInput = { forward: 0, right: 0, run: false };
   private readonly frame = new Matrix4();
@@ -119,6 +120,7 @@ export class MarsScene {
     line.frustumCulled = false;
     line.renderOrder = 10;
     this.scene.add(line);
+    this.overlays.push(line);
     return line;
   }
 
@@ -171,8 +173,9 @@ export class MarsScene {
     return this.fp;
   }
 
-  setTerrain(tiles: TilesRenderer[]): void {
-    this.terrain = tiles;
+  setTerrain(finestFirst: TilesRenderer[]): void {
+    this.terrain = finestFirst;
+    for (const t of this.tilesets) if (!finestFirst.includes(t)) this.overlays.push(t.group);
   }
 
   setStops(stops: StopPoint[]): void {
@@ -196,7 +199,7 @@ export class MarsScene {
     const view = this.fp ?? { az: 0, el: -5 };
     this.leaveFirstPerson();
     this.fp = { mode: "walk", at: { ...at }, az: view.az, el: view.el };
-    this.beginFirstPerson(SPACE_COLOR, 70);
+    this.beginFirstPerson(MARS_SKY_COLOR, 70);
   }
 
   exitFirstPerson(): void {
@@ -207,6 +210,7 @@ export class MarsScene {
     this.camera.fov = 50;
     this.camera.updateProjectionMatrix();
     this.controls.enabled = true;
+    for (const o of this.overlays) o.visible = true;
     this.placeCamera({ ...at, height: at.height + 400 }, 0, -60);
   }
 
@@ -236,9 +240,11 @@ export class MarsScene {
     const origin = this.ellipsoid.getCartographicToPosition(
       toRad(at.lat), toRad(at.lon), at.height + GROUND_PROBE_M, new Vector3());
     this.raycaster.set(origin, up.negate());
-    const hit = this.raycaster.intersectObjects(this.terrain.map((t) => t.group), true)[0];
-    if (!hit) return null;
-    return this.ellipsoid.getPositionToCartographic(hit.point, {}).height;
+    for (const tiles of this.terrain) {
+      const hit = this.raycaster.intersectObject(tiles.group, true)[0];
+      if (hit) return this.ellipsoid.getPositionToCartographic(hit.point, {}).height;
+    }
+    return null;
   }
 
   private enuFrame(at: Cartographic): Matrix4 {
@@ -260,6 +266,7 @@ export class MarsScene {
     this.controls.enabled = false;
     this.renderer.setClearColor(clear);
     this.camera.fov = fov;
+    for (const o of this.overlays) o.visible = false;
   }
 
   private leaveFirstPerson(): void {

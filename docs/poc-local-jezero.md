@@ -114,7 +114,28 @@ python -m common.validate .../l2_regional/jezero_poc/v1   → ok (after COG conv
   - `11_street_north.png` / `12_street_south.png`: Navcam 360 at OEB.
 
 ### Remaining findings
-- L4 mesh colour is still flat olive (finding 3), now visible on top of L2, so B should check the GLB material.
+- L4 mesh colour (finding 3, corrected): not a material bug. The GLB textures are the raw Navcam colour (checked by extracting a texture: yellow-green, not white-balanced); from a distance they average to olive. Needs white balance in B's build.
 - L1 (MDIM) vs L2 (HiRISE) imagery is offset by ~0.9 km at the L2 edge (D-008), and the brightness/tint differ.
 - The panorama has a vertical seam / colour step (the frame seams B noted).
 - Street view is entered by button only; clicking the stop in 3D is next.
+
+## Phase 6: more stops + walking (2026-11-15)
+- **What a stop costs:** the panorama needs only the `RAS_..._CYL_S_*` product (38–150 MB + label). The 4.5 GB of the pilot stop is mostly other panorama variants (1.4 GB), ORR image + DEM for `pc_align` (0.8 GB) and Navcam meshes (2.3 GB).
+- **Stops:** the mosaic inventory has 24 stops with a left-eye RAS CYL_S 360 (sols 2–409). All are inside the L2 tile. `scripts/poc/fetch_panos.py` downloads only those products through B's PDS helpers (~1.7 GB in total). L4 `build.py` gets a fallback `RAS_{code}_CYL_S_` pattern, because suffixes vary (`CLRREPR`, `MANUGEN`, `POSTDRV`, ...). This is a PoC change for B.
+- `layers/l4_streetview/build.py` → 24 stops in 8.5 min, `common.validate` ok, layer size 669M.
+- **Viewer walking (`src/walk.ts`, `src/street.ts`):**
+  - Stop picker with "Street view (24 stops)" and "Walk here".
+  - In a panorama: white ground arrows toward every panorama stop within 400 m. Click an arrow, or W/↑, to jump to the stop you're facing (±50°). F walks from here.
+  - Walking: WASD/arrows at 2 m/s (Shift 12 m/s), drag to look, eye 1.8 m above ground (ray down, finest terrain first). E opens the panorama of a stop within 20 m. Esc returns to orbit.
+  - Traverse line and rover meshes are hidden in first person (the decimated meshes look like debris at eye level).
+- **Headless check (`scripts/poc/screens/shot5.mjs`):**
+```
+pano      stop m2020_site1_drive52, 9 arrows (site3 drive1392/792/2208, site4 drive0/510/922/1712, site3 drive2346, site10 drive1114)
+after W   stop m2020_site3_drive1392
+walk      start h -4251.39 (pano eye -4252.01); after 5 s of W: +9.9 m north
+after E   back in pano m2020_site3_drive1392; after Esc: orbit
+npm test  27 passed; npm run build ok
+```
+- **Bug fixed:** the first walk height was 6 m too high because the ground ray also hit L1, which is only hidden visually under L2. The probe now tries terrain finest-first.
+- **Screenshots:** `docs/poc/13_pano_arrows.png`, `14_next_stop.png` (partial POSTDRV panorama with a baked-in azimuth grid; L2 terrain shows through the gap), `15_walk.png`.
+- **Panorama quality varies by variant:** some (`POSTDRV`, `CLRREPR`) are partial or carry grid/tick overlays. A per-stop preference list (cleanest variant first) would help; for B.
