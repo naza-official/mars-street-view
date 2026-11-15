@@ -18,7 +18,7 @@ export interface ResolvedLayer {
   key: string;
   baseUrl: string;
   layer: LayerJson;
-  tilesetUrl: string | null;
+  tilesetUrls: string[];
 }
 
 export type Fetcher = (url: string) => Promise<Response>;
@@ -51,14 +51,19 @@ export async function loadCatalog(fetcher: Fetcher, dataBase: string): Promise<C
   return catalog;
 }
 
+export function tilesetAssets(layer: LayerJson): string[] {
+  return Object.entries(layer.assets)
+    .filter(([name]) => name === "tileset" || name.endsWith("_tileset"))
+    .map(([, path]) => path);
+}
+
 export async function resolveLayer(
   fetcher: Fetcher, dataBase: string, key: string, version: string,
 ): Promise<ResolvedLayer> {
   const baseUrl = layerBaseUrl(dataBase, key, version);
   const layer = await getJson<LayerJson>(fetcher, joinUrl(baseUrl, "layer.json"));
   if (layer.schema !== "1.0") throw new Error(`${key}: unsupported layer schema ${layer.schema}`);
-  const tileset = layer.assets.tileset;
-  return { key, baseUrl, layer, tilesetUrl: tileset ? joinUrl(baseUrl, tileset) : null };
+  return { key, baseUrl, layer, tilesetUrls: tilesetAssets(layer).map((a) => joinUrl(baseUrl, a)) };
 }
 
 export interface CatalogResult {

@@ -1,9 +1,14 @@
 import {
-  Matrix4, PerspectiveCamera, Raycaster, Scene, Vector2, Vector3, WebGLRenderer,
+  BufferGeometry, Float32BufferAttribute, Line, LineBasicMaterial, Mesh, MeshBasicMaterial,
+  SphereGeometry, Matrix4, PerspectiveCamera, Raycaster, Scene, Vector2, Vector3, WebGLRenderer,
 } from "three";
 import { CAMERA_FRAME, Ellipsoid, GlobeControls, TilesRenderer } from "3d-tiles-renderer";
 import { Cartographic, MARS_RADIUS_M, toDeg, toRad } from "./geo";
 import { flightDuration, flightPoint } from "./flight";
+import { TraversePoint } from "./traverse";
+
+const BASE_SPHERE_DEPTH_M = 9_000;
+const TRAVERSE_LIFT_M = 3;
 
 export interface Flight {
   from: Cartographic;
@@ -33,6 +38,7 @@ export class MarsScene {
     this.controls.enableDamping = true;
     this.controls.setEllipsoid(this.ellipsoid, this.scene);
     (this.raycaster as Raycaster & { firstHitOnly?: boolean }).firstHitOnly = true;
+    this.scene.add(this.baseSphere());
     this.placeCamera({ lat: 18.4, lon: 77.5, height: 3 * MARS_RADIUS_M });
     this.resize();
     window.addEventListener("resize", () => this.resize());
@@ -47,6 +53,27 @@ export class MarsScene {
     this.scene.add(tiles.group);
     this.tilesets.push(tiles);
     return tiles;
+  }
+
+  addTraverse(points: TraversePoint[]): Line {
+    const xyz = points.map((p) => this.ellipsoid.getCartographicToPosition(
+      toRad(p.lat), toRad(p.lon), p.height + TRAVERSE_LIFT_M, new Vector3()));
+    const origin = xyz[0].clone();
+    const flat = xyz.flatMap((v) => v.sub(origin).toArray());
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new Float32BufferAttribute(flat, 3));
+    const line = new Line(geometry, new LineBasicMaterial({ color: 0x4fd1ff, depthTest: false }));
+    line.position.copy(origin);
+    line.frustumCulled = false;
+    line.renderOrder = 10;
+    this.scene.add(line);
+    return line;
+  }
+
+  private baseSphere(): Mesh {
+    const geometry = new SphereGeometry(MARS_RADIUS_M - BASE_SPHERE_DEPTH_M, 96, 48);
+    geometry.rotateX(Math.PI / 2);
+    return new Mesh(geometry, new MeshBasicMaterial({ color: 0x5a3a2a }));
   }
 
   cameraCartographic(): Cartographic {
@@ -71,7 +98,8 @@ export class MarsScene {
 
   pick(ndc: Vector2): Cartographic | null {
     this.raycaster.setFromCamera(ndc, this.camera);
-    const hit = this.raycaster.intersectObjects(this.tilesets.map((t) => t.group), true)[0];
+    const hit = this.raycaster.intersectObjects(this.tilesets.map((t) => t.group), true)
+      .find((h) => !(h.object instanceof Line));
     const point = hit ? hit.point : this.ellipsoid.intersectRay(this.raycaster.ray, new Vector3());
     if (!point) return null;
     const c = this.ellipsoid.getPositionToCartographic(point, {});

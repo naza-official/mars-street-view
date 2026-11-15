@@ -16,6 +16,7 @@ export interface Site {
 
 export const SITES: Site[] = [
   { id: "jezero", name: "Jezero", lat: 18.4, lon: 77.5, viewHeight: 120_000 },
+  { id: "oeb", name: "OEB landing", lat: 18.4446, lon: 77.4509, viewHeight: 3_000 },
   { id: "gale", name: "Gale", lat: -5.4, lon: 137.8, viewHeight: 250_000 },
 ];
 

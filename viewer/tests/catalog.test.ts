@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { Fetcher, layerBaseUrl, layerPrefix, resolveCatalog } from "../src/catalog";
+import {
+  Fetcher, LayerJson, layerBaseUrl, layerPrefix, resolveCatalog, tilesetAssets,
+} from "../src/catalog";
 
 const L1 = {
   layer: "l1_global", site: "global", version: "v2", schema: "1.0", owner: "A",
@@ -40,7 +42,7 @@ describe("catalog", () => {
     expect(calls).toEqual(["/catalog/index.json", "/orbital/l1_global/global/v2/layer.json"]);
     expect(errors).toEqual([]);
     expect(layers).toHaveLength(1);
-    expect(layers[0].tilesetUrl).toBe("/orbital/l1_global/global/v2/tileset.json");
+    expect(layers[0].tilesetUrls).toEqual(["/orbital/l1_global/global/v2/tileset.json"]);
   });
 
   it("reports a missing layer without dropping the others", async () => {
@@ -51,6 +53,13 @@ describe("catalog", () => {
     const { layers, errors } = await resolveCatalog(fetcher, "");
     expect(layers.map((l) => l.key)).toEqual(["l1_global/global"]);
     expect(errors[0]).toContain("l2_regional/jezero/v1/layer.json: HTTP 404");
+  });
+
+  it("collects per-stop tilesets from rover layers", () => {
+    const l4 = { ...L1, layer: "l4_streetview", assets: {
+      stops: "stops.geojson", s1_stop: "s1/stop.json", s1_tileset: "s1/tileset.json",
+      s2_tileset: "s2/tileset.json" } } as unknown as LayerJson;
+    expect(tilesetAssets(l4)).toEqual(["s1/tileset.json", "s2/tileset.json"]);
   });
 
   it("rejects an unknown catalog schema", async () => {

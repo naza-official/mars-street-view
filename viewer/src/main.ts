@@ -3,6 +3,7 @@ import "./style.css";
 import { resolveCatalog, ResolvedLayer } from "./catalog";
 import { SITES, Site, formatCartographic } from "./geo";
 import { MarsScene } from "./scene";
+import { parsePosesCsv } from "./traverse";
 
 const DATA_BASE: string = import.meta.env.VITE_DATA_BASE ?? "";
 
@@ -48,10 +49,18 @@ function showLayers(list: HTMLElement, layers: ResolvedLayer[], errors: string[]
   for (const e of errors) list.appendChild(el("li", { class: "error" }, e));
 }
 
+async function addTraverse(mars: MarsScene, layer: ResolvedLayer): Promise<void> {
+  const csv = layer.layer.assets.poses_csv;
+  if (!csv) return;
+  const res = await fetch(`${layer.baseUrl}${csv}`);
+  if (res.ok) mars.addTraverse(parsePosesCsv(await res.text()));
+}
+
 async function loadLayers(mars: MarsScene, list: HTMLElement): Promise<void> {
   try {
     const { layers, errors } = await resolveCatalog((u) => fetch(u), DATA_BASE);
-    for (const l of layers) if (l.tilesetUrl) mars.addTileset(l.tilesetUrl);
+    for (const l of layers) for (const url of l.tilesetUrls) mars.addTileset(url);
+    await Promise.all(layers.map((l) => addTraverse(mars, l)));
     showLayers(list, layers, errors);
   } catch (err) {
     list.appendChild(el("li", { class: "error" }, String(err)));
