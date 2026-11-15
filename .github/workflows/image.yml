@@ -1,0 +1,77 @@
+name: image
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "docker/**"
+      - "common/**"
+      - "pipelines/**"
+      - "layers/**"
+      - "pyproject.toml"
+      - ".github/workflows/image.yml"
+  workflow_dispatch:
+    inputs:
+      with_isis:
+        description: "Include the ISIS 10 conda env (tag suffix -isis)"
+        type: boolean
+        default: false
+
+env:
+  IMAGE: ghcr.io/naza-official/mars-sv
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Free runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          docker system prune -af
+          df -h /
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: |
+            latest=${{ inputs.with_isis != true && startsWith(github.ref, 'refs/tags/v') }}
+            suffix=${{ inputs.with_isis == true && '-isis' || '' }}
+          tags: |
+            type=ref,event=tag
+            type=sha,prefix=sha-
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            WITH_ISIS=${{ inputs.with_isis == true && '1' || '0' }}
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+      - name: Smoke test
+        run: |
+          tag=$(echo "${{ steps.meta.outputs.tags }}" | head -1)
+          docker run --rm "$tag" python -m common.validate --help
+          docker run --rm "$tag" pc_align --help | head -5
+          docker run --rm "$tag" snakemake --version
+          docker run --rm "$tag" dem_geoid --help | head -5
+          docker run --rm "$tag" python -m layers.l1_global.selftest
+          if [ "${{ inputs.with_isis }}" = "true" ]; then docker run --rm "$tag" /opt/conda/envs/isis/bin/cam2map -help > /dev/null; fi
+          docker image inspect "$tag" --format '{{.Size}}' | awk '{printf "image size %.2f GB\n", $1/1e9}'
+      - name: Push
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "${{ steps.meta.outputs.tags }}" | while read -r tag; do docker push "$tag"; done

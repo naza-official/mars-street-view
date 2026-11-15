@@ -1,0 +1,7 @@
+name: msv-iam
+description: Mars Street View IAM (lane write policies, msv-build role). Applied by the human with an IAM-capable profile; claude-agent cannot manage IAM.
+runtime:
+  name: python
+  options:
+    toolchain: pip
+    virtualenv: ../../.venv

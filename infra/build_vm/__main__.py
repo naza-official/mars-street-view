@@ -1,0 +1,101 @@
+import base64
+
+import pulumi
+import pulumi_aws as aws
+from job import Job, resolve, user_data
+
+ACCOUNT_ID = "123412369922"
+REGION = "us-west-2"
+AMI_PARAMETER = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
+STORAGE_STACK = "organization/msv-storage/main"
+IAM_STACK = "organization/msv-iam/main"
+TAGGED_RESOURCES = ("instance", "volume", "network-interface")
+SPOT_TAGGED = ("spot-instances-request",)
+
+config = pulumi.Config()
+job = resolve({key: config.get(key) for key in
+               ("target", "site", "run_id", "image_tag", "instance_types", "volume_gb",
+                "market")})
+tags = {"project": "mars-sv", "milestone": config.get("milestone") or "M3",
+        "run_id": job.run_id, "target": job.target, "site": job.site}
+provider = aws.Provider(
+    "aws", region=REGION, profile=config.get("aws_profile"),
+    allowed_account_ids=[ACCOUNT_ID], default_tags={"tags": tags},
+)
+opts = pulumi.ResourceOptions(provider=provider)
+invoke = pulumi.InvokeOptions(provider=provider)
+storage = pulumi.StackReference(STORAGE_STACK)
+iam = pulumi.StackReference(IAM_STACK)
+
+
+def security_group(vpc_id: str) -> aws.ec2.SecurityGroup:
+    return aws.ec2.SecurityGroup(
+        "sg", name="msv-build", description="msv build VM: egress only, no ingress",
+        vpc_id=vpc_id,
+        egress=[{"protocol": "-1", "from_port": 0, "to_port": 0, "cidr_blocks": ["0.0.0.0/0"],
+                 "ipv6_cidr_blocks": ["::/0"]}],
+        opts=opts,
+    )
+
+
+def tagged_kinds(job: Job) -> tuple[str, ...]:
+    return TAGGED_RESOURCES + (SPOT_TAGGED if job.market == "spot" else ())
+
+
+def launch_template(job: Job, sg: aws.ec2.SecurityGroup,
+                    subnet_id: pulumi.Input[str]) -> aws.ec2.LaunchTemplate:
+    ami = aws.ssm.get_parameter_output(name=AMI_PARAMETER, opts=invoke)
+    script = pulumi.Output.all(storage.require_output("bucket"),
+                               storage.require_output("log_group")).apply(
+        lambda args: base64.b64encode(user_data(job, args[0], REGION, args[1]).encode()).decode())
+    return aws.ec2.LaunchTemplate(
+        "lt", name_prefix="msv-build-", image_id=ami.value, user_data=script,
+        instance_initiated_shutdown_behavior="terminate",
+        iam_instance_profile={"arn": iam.require_output("build_instance_profile_arn")},
+        metadata_options={"http_endpoint": "enabled", "http_tokens": "required",
+                          "http_put_response_hop_limit": 2, "instance_metadata_tags": "enabled"},
+        block_device_mappings=[{"device_name": "/dev/xvda", "ebs": {
+            "volume_size": job.volume_gb, "volume_type": "gp3", "encrypted": "true",
+            "delete_on_termination": "true"}}],
+        network_interfaces=[{"device_index": 0, "associate_public_ip_address": "true",
+                             "subnet_id": subnet_id, "security_groups": [sg.id],
+                             "delete_on_termination": "true"}],
+        tag_specifications=[{"resource_type": kind, "tags": {**tags, "Name": f"msv-{job.run_id}"}}
+                            for kind in tagged_kinds(job)],
+        opts=opts,
+    )
+
+
+SPOT_OPTIONS = {"market_type": "spot", "spot_options": {
+    "spot_instance_type": "one-time", "instance_interruption_behavior": "terminate"}}
+
+
+def build_instance(job: Job, template: aws.ec2.LaunchTemplate) -> aws.ec2.Instance:
+    return aws.ec2.Instance(
+        "vm", instance_type=job.instance_types[0],
+        launch_template={"id": template.id, "version": template.latest_version.apply(str)},
+        instance_market_options=SPOT_OPTIONS if job.market == "spot" else None,
+        tags={**tags, "Name": f"msv-{job.run_id}"},
+        opts=opts,
+    )
+
+
+vpc = aws.ec2.get_vpc_output(default=True, opts=invoke)
+subnets = aws.ec2.get_subnets_output(
+    filters=[{"name": "vpc-id", "values": [vpc.id]},
+             {"name": "default-for-az", "values": ["true"]}],
+    opts=invoke,
+)
+subnet_id = subnets.ids.apply(lambda ids: sorted(ids)[0])
+vm = build_instance(job, launch_template(job, security_group(vpc.id), subnet_id))
+
+pulumi.export("run_id", job.run_id)
+pulumi.export("target", job.target)
+pulumi.export("site", job.site)
+pulumi.export("image", job.image)
+pulumi.export("instance_type", job.instance_types[0])
+pulumi.export("market", job.market)
+pulumi.export("done_uri", storage.require_output("bucket").apply(
+    lambda b: f"s3://{b}/work/{job.run_id}/DONE"))
+pulumi.export("instance_id", vm.id)
+pulumi.export("availability_zone", vm.availability_zone)

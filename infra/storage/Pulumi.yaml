@@ -1,0 +1,7 @@
+name: msv-storage
+description: Mars Street View output bucket, lane write policies, CloudFront read path
+runtime:
+  name: python
+  options:
+    toolchain: pip
+    virtualenv: ../../.venv

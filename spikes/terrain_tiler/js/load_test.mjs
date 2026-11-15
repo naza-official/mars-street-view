@@ -61,6 +61,9 @@ const server = await serve(rootDir);
 const url = `http://localhost:${server.address().port}/${entry}`;
 globalThis.window = { location: { href: url }, devicePixelRatio: 1, addEventListener() {}, removeEventListener() {} };
 globalThis.location = globalThis.window.location;
+globalThis.self = globalThis;
+globalThis.ImageBitmap = class ImageBitmap { constructor() { this.width = 1; this.height = 1; } close() {} };
+globalThis.createImageBitmap = async () => new globalThis.ImageBitmap();
 globalThis.requestAnimationFrame = (cb) => setTimeout(() => cb(Date.now()), 16);
 globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
 const tiles = new TilesRenderer(url);
@@ -82,7 +85,8 @@ tiles.addEventListener('load-model', ({ scene, tile }) => {
 tiles.addEventListener('load-error', ({ error, url: u }) => stats.errors.push(`${u}: ${error?.message ?? error}`));
 const started = Date.now();
 let settled = 0;
-while (Date.now() - started < 30000 && settled < 40) {
+const minMs = Number(process.env.MIN_MS ?? 0);
+while (Date.now() - started < 30000 && (settled < 40 || Date.now() - started < minMs)) {
 	camera.updateMatrixWorld();
 	tiles.update();
 	await new Promise((r) => setTimeout(r, 25));

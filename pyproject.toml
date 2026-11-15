@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mars-sv-common"
-version = "0.1.0"
+version = "0.2.0"
 description = "Shared L0 library for Mars Street View"
 requires-python = ">=3.11"
 dependencies = [
@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = ["pytest>=8", "ruff>=0.6", "moto[s3]>=5.0.20"]
 rover = [
   "pandas>=2.2",
   "pyarrow>=15",
@@ -25,6 +25,15 @@ rover = [
   "scipy>=1.11",
   "requests>=2.31",
   "fast-simplification>=0.1",
+]
+terrain = ["pydelatin==0.4.0", "pillow>=10", "scipy"]
+infra = ["pulumi>=3.200,<4", "pulumi-aws>=7.50,<8"]
+tiler = [
+  "py3dtiles==12.1.1",
+  "quantized-mesh-encoder==0.5.0",
+  "pydelatin==0.4.0",
+  "pygltflib",
+  "scipy",
 ]
 
 [tool.setuptools.packages.find]

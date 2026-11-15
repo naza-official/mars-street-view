@@ -6,10 +6,232 @@ Newest session first. Each entry: date, milestone, what changed, evidence (comma
 | ID | Question | Status |
 |---|---|---|
 | D-001 | CRS code written in layer.json (proposed IAU_2015:49900) | open, issue #2, `docs/decisions/D-001-crs-code.md`, rec: keep 49900 as body+datum code |
-| D-002 | Terrain tiler for a Mars sphere | open, issue #5, `docs/decisions/D-002-terrain-tiler.md`, rec: A (own mesher → 3D Tiles 1.1 GLB) |
+| D-002 | Terrain tiler for a Mars sphere | **decided 2026-11-14 by human: A (own mesher → 3D Tiles 1.1 GLB)**, issue #5 |
 | D-003 | One R2 bucket with prefixes vs two buckets | **decided 2026-11-14 by human: no R2; one AWS S3 bucket `mars-sv-123412369922` (us-west-2)**, issue #3 |
+| D-004 | How the build VM pulls the GHCR image | **decided 2026-11-14 by human: package public, verified anonymous pull**, issue #12 |
+| D-005 | ISIS in the build image | **decided 2026-11-14 by human: optional, `WITH_ISIS=0` default**, `docs/decisions/D-005-isis-optional.md` |
+| D-006 | EC2 vCPU quota (5) vs 16-vCPU build VM | open, issue #16, `docs/decisions/D-006-ec2-vcpu-quota.md`, rec: request Spot standard quota 32 |
+| D-008 | Meaning of "MDIM shift at Jezero < 232 m" | **decided 2026-11-14 by human: datum-conversion shift (0 m); MDIM–MOLA registration (~0.9 km) recorded in notes**, `docs/decisions/D-008-mdim-shift.md` |
+| D-007 | Public read for the viewer (CloudFront needs account verification) | open, issue #17, `docs/decisions/D-007-public-read.md`, rec: AWS Support case, then `cdn=true` |
 
 ## Sessions
+### 2026-11-14/15 — M4 L1 global base (status: review, branch `m4-l1-global`, PR #21)
+
+**Decisions:** D-002 → A (own mesher, 3D Tiles 1.1 GLB; #5 closed). D-008 → the M4 "MDIM shift" criterion is the datum-conversion shift; MDIM–MOLA registration (~0.9 km at Jezero) is recorded, not corrected (#19). Contract issue #20 (common.terrain) for Person B; #15 gets the parallel `publish_dir`.
+
+**What changed:**
+- Sources: planetarymaps.usgs.gov redirects to `s3://asc-pds-services/mosaic/` (us-west-2). Neither MOLA nor MDIM is a COG (uncompressed strips), so the VM copies them in-region and checks the published `.md5`. PDS labels: both planetocentric on a 3,396,190 m sphere for lat/lon (MDIM label has C axis 3376.2 but `PROJECTION_LATITUDE_TYPE = PLANETOCENTRIC`), pixel edges on ±180/±90 (the MOLA GeoTIFF header origin is off by ~½ px x, ~¼ px y; we use the PDS grid, as the M1 fixtures did).
+- `common/terrain.py`: TileKey/TileGrid, pydelatin TIN on heights along the tile-centre up vector (curvature-aware), regular grid below level 4, skirts, GLB with `KHR_mesh_quantization` + `KHR_materials_unlit` + embedded JPEG, `box` volumes only. No meshopt (only an alpha third-party Python binding exists).
+- `layers/l1_global/`: `ingest` (fetch+md5, longitude-roll VRT, `dem_geoid` + PDS areoid check, COGs), `shift` (`registration`: NCC of MDIM vs MOLA hillshades over 8 azimuths; `conversion`: source vs product pixels), `tiles` (2x1 roots, levels 0-7, 180 segments/tile so leaves = 463 m, leaf TIN 10 m, external tilesets from level 4, geometric error = TIN + quantisation + pyramid refinement chain), `layer` (layer.json + notes), `selftest` (in-image global dem_geoid check, run in the image CI), `rules.smk` (target `l1`, version from `layer.VERSION`).
+- `pipelines/catalog.py` (index.json with If-Match / If-None-Match), `common.storage.publish_dir` parallel (16 threads, layer.json last), `.nosync` markers skip dirs in the work sync, Snakefile puts the repo on `sys.path`.
+- `infra/build_vm`: `MSV_MARKET=spot|on-demand` (spot-request tags only on Spot).
+- Images: v0.4.0, v0.4.1, **v0.4.2** (`sha256:a3dc0555121fd753424438b22516669b14ed9746e2bb7493c5fb19220af34e2d`), pyproject 0.2.0 (`terrain` extra).
+
+**Runs (5, ~$1.07 total, all in `docs/runs.md`):** 1 failed (TileKey not orderable with two roots), 2 Spot interruption (no capacity, us-west-2d), 3 on-demand launch rejected (spot-request tags), 4 succeeded → **v1 published with a defect** (sub-tileset URIs relative to the root, levels 4-7 unresolvable; superseded), 5 succeeded → **v2**.
+
+**Evidence (acceptance, on v2):**
+```
+$ python -m common.validate s3://mars-sv-123412369922/orbital/l1_global/global/v2/
+  asset dtm: size: 46080x23040x1 float32 block 512x512 overviews [2, 4, 8, 16, 32, 64, 128] DEFLATE
+  asset dtm: kind: elevation
+  asset dtm: height range: -23208.1 .. 21079.0 m
+  asset ortho: size: 92160x46080x3 uint8 block 512x512 overviews [2, 4, 8, 16, 32, 64, 128, 256] JPEG
+  asset ortho: kind: imagery
+  asset tileset: present
+ok s3://mars-sv-123412369922/orbital/l1_global/global/v2/
+exit 0
+$ aws s3 cp s3://mars-sv-123412369922/catalog/index.json -
+{"schema": "1.0", "layers": {"l1_global/global": "v2"}}
+$ layer.json notes (v2, built_with ghcr.io/naza-official/mars-sv:v0.4.2)
+MDIM datum-conversion shift at Jezero (77.5E 18.4N), measured: -0.2 m E, 0.2 m N (|0.3| m, limit 232 m; D-008). MDIM 2.1 vs MOLA image registration at Jezero: -897.0 m E, 71.0 m N (NCC 0.52); a source limitation, not corrected in v2 (D-008). Heights: MOLA areoid -> sphere with ASP dem_geoid; vs PDS areoid mean 0.003 m, max 1.064 m over 2000 px. Tiles: 3D Tiles 1.1 GLB, 43690 tiles, 3.73 GB, levels 0-7, leaf TIN error 10.0 m, ...
+$ aws ec2 describe-instances --filters Name=tag:project,Values=mars-sv (pending..shutting-down) -> 0
+$ aws ec2 describe-volumes --filters Name=tag:project,Values=mars-sv -> 0
+$ pulumi stack --stack job -> Current stack resources (0)
+```
+Extra checks:
+```
+URI resolution over every published tileset json: objects 44206, tileset jsons 513, content refs 44202, glb 43690, unresolved 0
+3d-tiles-validator on published sub/4/6/6.json (Jezero, 85 tiles): numErrors 0, numWarnings 0, numInfos 85 (NPOT 360 px textures)
+local regional build with external tilesets: validator 0 errors / 0 warnings; 3DTilesRendererJS loads to leaves, 0 errors (default errorTarget is 16 px)
+ruff check . -> All checks passed!   pytest -q -> 117 passed
+image CI selftest: dem_geoid vs PDS areoid on a global 0-360 grid: mean -0.006 m, max 0.61 m
+```
+
+**Open problems:**
+- `orbital/l1_global/global/v1/` is published and broken below level 4 (immutable; catalog points at v2). Person B / the viewer must not use v1.
+- `common.validate` only checks a tileset's presence; it should resolve content URIs (that would have caught v1). Needs a `common/` change → contract issue.
+- MDIM–MOLA misregistration 0.15–1.1 km (D-008); possible `l1_global` v3 with a global displacement field.
+- No meshopt; tiles 3.73 GB. Objects are served without Content-Type/Encoding (fine for fetch; gzip would cut mesh bytes).
+- `build_vm` always uses the first default subnet (us-west-2d); Spot interruptions there → on-demand option added. D-006 (vCPU quota now 8) and D-007 (CloudFront, needed by M5) still open.
+- SSO sessions are 4 h; `run_job.sh`'s final destroy fails if the session expires while waiting.
+
+**Next step:** human reviews PR #21, sets M4 `done`. Then M5 (viewer skeleton; needs D-007) or M6 (L2 Jezero).
+
+### 2026-11-14 — M3 Pulumi storage + build_vm, smoke run (status: review, branch `m3-infra`)
+
+**What changed:**
+- `common.storage`: `put_new` (PutObject with `If-None-Match: *` plus `x-amz-meta-sha256`; the same content again is a no-op, different content raises `AlreadyPublished`; single PUT only, at most 5 GB). `publish_dir` uploads `layer.json` last and skips dotfiles. `rasterio_session()` (boto3-backed `AWSSession`, so GDAL `/vsis3` works with the SSO profile locally). `common.publish` CLI: validate, then publish to `<orbital|rover>/<layer>/<site>/vN/`. Contract issue #15 is open for Person B.
+- `pipelines.smoke` plus Snakefile rules `smoke_build` → `smoke`: a synthetic 256x128 global DTM COG (IAU_2015:49915, lon 0-360) plus `layer.json`, published to `orbital/_smoke/global/v1/`. The build is byte-deterministic.
+- Image: `PYTHONPATH=/opt/msv` (Snakemake runs from `/work/<run_id>`; `pipelines` isn't pip-installed). Published **`v0.3.1`** (`sha256:51217658230af4378b7139b09bff0da4e16ca0adb2876db89439a2e7c0d47ef9`, CI run 43624825766). `v0.3.0` lacks the PYTHONPATH fix.
+- **Three stacks** (all Pulumi Python, S3 backend, KMS secrets):
+  - `infra/iam` (stack `main`, 9 resources, applied by the human): policies `msv-lane-a-write` (orbital, catalog, work) and `msv-lane-b-write` (rover, catalog, work); role and instance profile `msv-build` with boundary `agent-boundary` (SSM `/msv/*`, USGS buckets `astrogeo-ard`, `asc-pds-services` and `asc-astropedia` read, `/msv/build` logs, SSM core, lane A).
+  - `infra/storage` (stack `main`, 11 resources): bucket `mars-sv-123412369922` (protect, versioning, SSE-S3, public access block, BucketOwnerEnforced), lifecycle (`work/` expires after 14 d, aborted multipart uploads after 7 d), CORS GET/HEAD for `viewer_origins`, log group `/msv/build` (30 d). Bucket policy: deny PutObject on `orbital/*` and `rover/*` without `If-None-Match`; deny non-TLS. CloudFront plus OAC sits behind config `cdn` (default off, D-007).
+  - `infra/build_vm` (stack `job`): egress-only SG `msv-build`; launch template (AL2023 AMI from SSM, IMDSv2 required with hop limit 2, encrypted gp3 deleted on termination, shutdown=terminate, tags on instance, volume, ENI and spot request); a **one-time Spot `aws.ec2.Instance`**. Job settings come from env `MSV_TARGET/SITE/RUN_ID/IMAGE_TAG/INSTANCE_TYPES/VOLUME_GB`, then stack config, then defaults (`m7i.4xlarge`, 500 GB, `v0.3.1`). The user-data installs Docker, pulls the image, runs the target with awslogs, syncs `work/`, writes `work/<run_id>/DONE` (JSON) from an EXIT trap, then `shutdown -h now`. It also schedules a 72 h hard stop.
+- `scripts/run_job.sh <target> <site>`: Pulumi runs on `/dev/tty` (the human confirms `up` and `destroy`; no `--yes`). It tries each type in `MSV_INSTANCE_TYPES` in order, polls `DONE`, prints the CloudWatch tail, and destroys from an EXIT trap. It then checks instances and volumes. The log goes to `logs/` (gitignored).
+- Decisions: D-006 vCPU quota (#16), D-007 public read / CloudFront (#17).
+
+**What failed on the way (kept for the next session):**
+- `claude-agent` can't create IAM policies or roles in Pulumi (the read-after-create calls `ListPolicyTags`/`ListRoleTags` were denied, and the creates rolled back), so IAM went to a separate stack. After the human added permissions, `claude-agent` applied `infra/iam` itself.
+- CloudFront: "Your account must be verified" → D-007.
+- EC2 Fleet `instant` failed three times on CreateFleet validation (`TerminateInstancesWithExpiration` not supported; `MinTargetCapacity` only for single-type or single-AZ fleets; then "minimum target capacity should be >= 1"). Replaced by a plain Spot instance as agreed with the human. No instance launched in those attempts.
+- `run_job.sh` piping stdout through `tee` made Pulumi non-interactive; killed runs left stale state locks (removed by hand after checking the PID was gone). Delete a lock only with the exact key (`aws s3api delete-object`), not a concatenated path.
+- Smoke run 1 (v0.3.0): `No module named 'pipelines'` → v0.3.1.
+- `orbital/_smoke/global/v1/` contains a stray empty `.snakemake_timestamp` (from Snakemake `directory()`); v1 is immutable, so it stays. `publish_dir` now skips dotfiles.
+
+**Evidence (acceptance):**
+```
+$ cd infra/storage && pulumi preview
+Resources:
+    11 unchanged
+$ cd infra/build_vm && pulumi preview
+Resources:
+    + 5 to create
+$ MSV_INSTANCE_TYPES=m7i.xlarge,m6i.xlarge,m5.xlarge MSV_VOLUME_GB=50 bash scripts/run_job.sh smoke global   (run by human)
+[18:17:07] instance i-022383a7b5f6b086e m7i.xlarge in us-west-2d
+{"run_id":"smoke-global-20261114t181551z","target":"smoke","site":"global","image":"ghcr.io/naza-official/mars-sv:v0.3.1","status":0,"step":"done","started":"2026-11-14T18:16:50Z","finished":"2026-11-14T18:18:29Z"}
+[18:19:21] target smoke finished with status 0
+... 2 of 2 steps (100%) done
+... synced 4 files to s3://mars-sv-123412369922/work/smoke-global-20261114t181551z/
+[18:25:34] left: instances(pending/running/stopping/shutting-down)=0 volumes=0
+$ python -m common.validate s3://mars-sv-123412369922/orbital/_smoke/global/v1/
+  layer.json: layer.json
+  asset dtm: crs: Mars (2015) - Sphere / Ocentric / Equirectangular, clon = 180
+  asset dtm: size: 256x128x1 float32 block 512x512 overviews [] DEFLATE
+  asset dtm: kind: elevation
+  asset dtm: height range: -1999.8 .. 1999.8 m
+ok s3://mars-sv-123412369922/orbital/_smoke/global/v1/
+$ aws ec2 describe-instances --filters Name=tag:project,Values=mars-sv Name=instance-state-name,Values=running --query 'length(Reservations)'
+0
+$ aws ec2 describe-volumes --filters Name=tag:project,Values=mars-sv --query 'length(Volumes)'
+0
+$ docs/runs.md: two M3 smoke rows (m7i.xlarge Spot $0.0833/h, < $0.01 each)
+```
+Extra checks: on the real bucket, `put_new` → True, same again → False, changed → `AlreadyPublished`, plain PutObject → `AccessDenied` (test key and all versions deleted). Inside image v0.3.1: 23 storage, publish and smoke tests pass (botocore 1.43.127 supports `IfNoneMatch`). `ruff check .` is clean; `pytest -q` **88 passed**.
+
+**Open problems:**
+- D-006: quota of 5 vCPU; M4 needs the increase (or 4-vCPU builds).
+- D-007: CloudFront verification is needed before M5.
+- #15: Person B's review of the `common.storage` publish API.
+- `scripts/run_job.sh` has no executable bit (the agent's permission policy blocks commands on it); run it with `bash scripts/run_job.sh`.
+- The `msv-build` role's write to `orbital/*` under the boundary is proven by the smoke publish; its USGS read and SSM read are not exercised yet (M4).
+
+**Next step:** the human reviews the PR, sets M3 `done`, requests the vCPU quota (D-006) and opens the CloudFront support case (D-007). Then M4 (L1 global base).
+
+### 2026-11-14 — M2 follow-up: M2 done, D-004 decided
+
+- PR #10 merged by human; human set **M2 `done`**.
+- D-004 decided: make `ghcr.io/naza-official/mars-sv` public. It can only be changed in the GitHub UI (no API). At the time of this commit an anonymous pull is still refused:
+```
+$ curl (anonymous token) https://ghcr.io/v2/naza-official/mars-sv/manifests/v0.2.0
+anonymous manifest v0.2.0 HTTP 404
+```
+- Follow-up PR merged on the human's instruction without waiting for checks.
+
+Update: human set the package public. Anonymous pull verified (empty `DOCKER_CONFIG`, `docker manifest inspect ...:v0.2.0` exit 0; registry request with `Accept: application/vnd.oci.image.manifest.v1+json` returns HTTP 200 for v0.2.0 and v0.1.0). **Correction:** the earlier 404 "private" checks (here and in the M2 entry) sent the wrong Accept header; GHCR returns `MANIFEST_UNKNOWN` (404) for an OCI manifest without `application/vnd.oci.image.manifest.v1+json`. For anonymous checks use `docker manifest inspect` with an empty `DOCKER_CONFIG`.
+
+Next step: M3 (Pulumi storage + build_vm, smoke run) with image `v0.2.0`.
+
+### 2026-11-14 — M2 Container image on GHCR (status: review, PR #10)
+
+Branch `m2-container-image`. Image `ghcr.io/naza-official/mars-sv:v0.1.0` (= `sha-e65d8ed` = `latest`), digest `sha256:11ef1e286fac9ab274aa9ea1116d812592b6e9abc7a7d41ac96373c6176d2def`. Decision issue #12 (D-004).
+
+**What changed:**
+- `docker/Dockerfile`: `condaforge/miniforge3:26.9.4-0`, **linux/amd64 only** (ISIS has no linux-aarch64 build; the build VM is x86). Layers: apt runtime libs (ASP needs `libx11-6 libxau6 libxext6 libsm6 libice6`); conda env `isis` (`isis=10.0.0` from `usgs-astrogeology`, minus `include/` and `*.a`: saves 0.66 GB); ASP 3.7.0 release tarball (`StereoPipeline-3.7.0-2026-06-08-x86_64-Linux`, sha256-checked) in `/opt/asp`; conda env `msv` (`docker/env-msv.yml`: python 3.11, gdal 3.10, rasterio 1.4, pyproj 3.7, numpy 2.2, pystac(-client), boto3, jsonschema; snakemake 9.27.1 from pip because conda-forge doesn't carry it, only bioconda); repo `common`, `pipelines`, `configs` in `/opt/msv`, `pip install .[tiler]`.
+- PATH order: `msv` env, then base conda, then ASP `bin`. ISIS is **not** on PATH (it has its own python/GDAL); `ISISROOT=/opt/conda/envs/isis`, `ISISDATA=/isisdata` (empty, mount at runtime). The ASP wrappers unset GDAL/PROJ env, so the msv GDAL doesn't break them.
+- `docker/entrypoint.sh`: `run <target>` → `snakemake --cores all --rerun-incomplete --directory /work/<run_id> --config site= run_id= bucket=`, then `python -m pipelines.sync_work` uploads `/work/<run_id>` to `s3://$MSV_BUCKET/work/<run_id>/` (skips `.snakemake/`, refuses keys outside `work/`). Env: `MSV_SITE` (required), `MSV_RUN_ID`, `MSV_BUCKET`, `MSV_SYNC`. Any other argv is exec'd as is.
+- `pipelines/Snakefile`: `configfile` now resolved from `workflow.basedir`, so it works with `--directory`.
+- `pyproject.toml`: `tiler` extra (spike deps: py3dtiles 12.1.1, quantized-mesh-encoder 0.5.0, pydelatin 0.4.0, pygltflib, scipy). Covers D-002 options A to C until the decision lands.
+- `.github/workflows/image.yml`: on PRs touching docker/common/pipelines it builds and smoke-tests without pushing; on `v*` tags (and manual dispatch) it pushes to GHCR. Clean-runner build time 8 min.
+- `scripts/check_dem_geoid.py`, `tests/pipelines/test_sync_work.py` (3 tests; suite 61).
+- `docs/decisions/D-004-image-pull.md`.
+
+**Findings worth keeping:**
+- **`dem_geoid` verified against the Python areoid** (open from M1): on `tests/fixtures/mola_jezero.tif`, `--geoid mola --reverse-adjustment` minus `common.datum.areoid_offset` = mean 0.024 m, max |0.84| m over 500 px. ASP warns `Unknown datum: Mars (2015) - Sphere. Guessing: D_MARS.` That guess is correct (3,396,190 m sphere), but watch for it if a DEM's CRS changes. ASP uses its bundled `/opt/asp/share/geoids/mola_areoid.tif`.
+- ASP 3.7.0 also ships aarch64-Linux tarballs, but ISIS 10 doesn't, so the image can't be multi-arch while it includes ISIS.
+- ISIS is 5.1 GB of the 8.97 GB. If M4/M6 never call ISIS apps (they use pre-made mosaics and DTMs), a `WITH_ISIS=0` build arg would cut the image to about 3.9 GB. Not done: the plan asks for ISIS.
+- The GHCR package is **private** (anonymous manifest request returns 404) even though the repo is public → D-004.
+
+**Evidence (acceptance, against the published image after `docker rmi` of the local build and `docker pull`):**
+```
+$ docker run --rm ghcr.io/naza-official/mars-sv:v0.1.0 python -m common.validate --help
+usage: python -m common.validate [-h] target
+
+Validate a COG, a layer.json / catalog index, or a layer folder (local path or
+s3:// URI).
+exit 0
+$ docker run --rm ghcr.io/naza-official/mars-sv:v0.1.0 pc_align --help
+Usage: /opt/asp/libexec/pc_align --max-displacement arg [other options] <reference cloud> <source cloud> -o <output prefix>
+
+  [ASP 3.7.0]
+  Build date: 2026-06-08
+exit 0
+$ docker run --rm ghcr.io/naza-official/mars-sv:v0.1.0 snakemake --version
+9.27.1
+exit 0
+```
+Image size: **8.97 GB uncompressed** (8,972,996,581 bytes), **2.91 GB compressed** (sum of layer sizes in the manifest, 2,912,806,593 bytes).
+
+Extra checks (local `mars-sv:dev` build, same Dockerfile):
+```
+$ docker run --rm mars-sv:dev dem_geoid --help        -> exit 0, [ASP 3.7.0]
+$ docker run --rm -v $PWD:/repo -w /repo mars-sv:dev python scripts/check_dem_geoid.py tests/fixtures/mola_jezero.tif
+{"n": 500, "mean_m": 0.02383300781261278, "max_abs_m": 0.8413085937502274}
+exit 0
+$ ... python -c 'import py3dtiles,pydelatin,pygltflib,quantized_mesh_encoder,rasterio'  -> tiler ok, rasterio gdal 3.10.3
+$ ... cam2map -help (ISISROOT set)                     -> exit 0
+$ docker run --rm -e MSV_SITE=jezero -e MSV_RUN_ID=t1 -e MSV_SYNC=0 mars-sv:dev run all
+1 of 1 steps (100%) done
+exit 0
+$ ruff check .        -> All checks passed!
+$ pytest -q           -> 61 passed
+```
+CI: PR #10 `ci` success (43608466756), `image` build+smoke success (43608466744, 7m59s); tag `v0.1.0` `image` build+smoke+push success (43612508018).
+
+**Open problems:**
+- D-004 (#12): the build VM can't pull the private package anonymously. Needs a decision before M3 user-data.
+- `run <target>` sync path tested with `MSV_SYNC=0` only; the S3 upload is unit-tested with a mock. First real use is the M3 smoke run.
+- No cloud resources used this session; nothing to log in `docs/runs.md`.
+
+**Follow-up (same session): ISIS optional (D-005, decided by human).**
+- `docker/Dockerfile`: build arg `WITH_ISIS` (default `0`); ISIS layer moved after ASP and msv so both variants share them. The entrypoint sets `ISISROOT`/`ISISDATA` only when `/opt/conda/envs/isis` exists (ASP wrappers set their own `ISISROOT`).
+- `image` workflow: `v*` tags build the default image; `workflow_dispatch` with `with_isis=true` builds `<ref>-isis`.
+- Local builds:
+```
+mars-sv:slim (default)    3,897,726,003 bytes   ISISROOT=unset              envs: msv
+mars-sv:isis (WITH_ISIS=1) 8,972,893,630 bytes  ISISROOT=/opt/conda/envs/isis  envs: isis msv
+both: common.validate --help, pc_align --help, snakemake --version, dem_geoid --help -> exit 0
+isis: cam2map -help -> exit 0
+slim: check_dem_geoid.py -> {"n": 500, "mean_m": 0.0238, "max_abs_m": 0.8413}; run all -> 1 of 1 steps done
+```
+- Published **`ghcr.io/naza-official/mars-sv:v0.2.0`** (= `sha-350f3de` = `latest`), digest `sha256:bd6ebe452a47c89e9ce453b9169fd83d6307af59ec309b99246c13817e4c118c`, workflow run 43615695340 (tag pushed with human approval). This is the image for M3. `v0.1.0` (ISIS included) stays on GHCR.
+- Acceptance re-run against the pulled `v0.2.0` (local images removed first):
+```
+$ docker run --rm ghcr.io/naza-official/mars-sv:v0.2.0 python -m common.validate --help
+usage: python -m common.validate [-h] target
+exit 0
+$ docker run --rm ghcr.io/naza-official/mars-sv:v0.2.0 pc_align --help
+Usage: /opt/asp/libexec/pc_align --max-displacement arg [other options] <reference cloud> <source cloud> -o <output prefix>
+  [ASP 3.7.0]
+exit 0
+$ docker run --rm ghcr.io/naza-official/mars-sv:v0.2.0 snakemake --version
+9.27.1
+exit 0
+dem_geoid --help exit 0; ISISROOT=unset; envs: msv
+```
+- **Image size v0.2.0: 3.90 GB uncompressed (3,897,754,607 bytes), 1.31 GB compressed (1,309,750,149 bytes).** The CI smoke step's `docker image inspect .Size` printed 1.31 GB on this run but 8.97 GB (uncompressed) on the v0.1.0 run, so the runner's Docker seems to have switched to reporting compressed size. Trust the numbers above, not that CI line.
+
+**Next step:** human reviews PR #10, decides D-004, sets M2 `done`. Then M3 (Pulumi storage + build_vm stacks, smoke run) with image `v0.2.0`.
+
 ### 2026-11-14 — M1 follow-up: M1 done, storage R2 → S3
 
 - Human set **M1 `done`** (PR #7 merged 2026-11-14T14:38Z).

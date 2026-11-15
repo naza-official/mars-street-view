@@ -1,0 +1,7 @@
+name: msv-build-vm
+description: Mars Street View Spot build VM for one pipeline target (EC2 Fleet, instant)
+runtime:
+  name: python
+  options:
+    toolchain: pip
+    virtualenv: ../../.venv

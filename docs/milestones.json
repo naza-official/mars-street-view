@@ -1,6 +1,12 @@
 {
   "schema": "1.0",
-  "status_values": ["todo", "in_progress", "review", "done", "blocked"],
+  "status_values": [
+    "todo",
+    "in_progress",
+    "review",
+    "done",
+    "blocked"
+  ],
   "rule": "Agent may set todo, in_progress, review, blocked. Only the human sets done.",
   "milestones": [
     {
@@ -20,7 +26,9 @@
       "id": "M1",
       "title": "L0 common library + terrain-tiler spike",
       "status": "done",
-      "depends_on": ["M0"],
+      "depends_on": [
+        "M0"
+      ],
       "human_gate": "PR review by A and B; decision D-002",
       "acceptance": [
         "pytest -q tests/common",
@@ -33,8 +41,10 @@
     {
       "id": "M2",
       "title": "Container image on GHCR",
-      "status": "todo",
-      "depends_on": ["M1"],
+      "status": "done",
+      "depends_on": [
+        "M1"
+      ],
       "human_gate": "PR review",
       "acceptance": [
         "docker run --rm ghcr.io/naza-official/mars-sv:<tag> python -m common.validate --help",
@@ -46,8 +56,10 @@
     {
       "id": "M3",
       "title": "Pulumi storage (S3) + build_vm stacks, smoke run",
-      "status": "todo",
-      "depends_on": ["M2"],
+      "status": "done",
+      "depends_on": [
+        "M2"
+      ],
       "human_gate": "Approve first pulumi up and destroy per stack",
       "acceptance": [
         "cd infra/storage && pulumi preview",
@@ -62,8 +74,10 @@
     {
       "id": "M4",
       "title": "L1 global base",
-      "status": "todo",
-      "depends_on": ["M3"],
+      "status": "review",
+      "depends_on": [
+        "M3"
+      ],
       "human_gate": "Approve build run",
       "acceptance": [
         "python -m common.validate s3://mars-sv-123412369922/orbital/l1_global/global/v1/",
@@ -76,7 +90,9 @@
       "id": "M5",
       "title": "Viewer skeleton",
       "status": "todo",
-      "depends_on": ["M4"],
+      "depends_on": [
+        "M4"
+      ],
       "human_gate": "Human opens the deployed URL",
       "acceptance": [
         "cd viewer && npm run build",
@@ -88,7 +104,9 @@
       "id": "M6",
       "title": "L2 Jezero terrain (handoff to Person B)",
       "status": "todo",
-      "depends_on": ["M4"],
+      "depends_on": [
+        "M4"
+      ],
       "human_gate": "Approve build run; confirm seam visually",
       "acceptance": [
         "python -m common.validate s3://mars-sv-123412369922/orbital/l2_regional/jezero/v1/",
@@ -102,7 +120,10 @@
       "id": "M7",
       "title": "Integration gate with Person B pilot stop",
       "status": "todo",
-      "depends_on": ["M5", "M6"],
+      "depends_on": [
+        "M5",
+        "M6"
+      ],
       "human_gate": "Human and Person B confirm alignment",
       "acceptance": [
         "cd viewer && npm test",
@@ -115,7 +136,9 @@
       "id": "M8",
       "title": "L5 thermal",
       "status": "todo",
-      "depends_on": ["M5"],
+      "depends_on": [
+        "M5"
+      ],
       "human_gate": "Licence check; approve build run",
       "acceptance": [
         "python -m common.validate s3://mars-sv-123412369922/orbital/l5_thermal/jezero/v1/",

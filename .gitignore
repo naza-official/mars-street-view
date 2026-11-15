@@ -10,6 +10,7 @@ raw/
 *.egg-info/
 .snakemake/
 node_modules/
+logs/
 
 # local review material (images for manual grading), never committed
 review/

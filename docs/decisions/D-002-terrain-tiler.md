@@ -96,7 +96,7 @@ Reject B: points not terrain, wrong up-axis in a standard renderer, invalid outp
 - Visual check in a browser with real WebGL (M5); the spike loads geometry in Node only.
 
 ## Decision
-_(human)_
+Option A (own mesher writing 3D Tiles 1.1 GLB, with additions 1-4 above). Decided by the human 2026-11-14 at the start of M4.
 
 ## Date
 2026-11-14 (opened)

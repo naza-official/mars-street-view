@@ -1,5 +1,28 @@
-configfile: "configs/sites/jezero.yaml"
+import sys
+from pathlib import Path
+
+REPO = Path(workflow.basedir).parent
+sys.path.insert(0, str(REPO))
+
+configfile: str(REPO / "configs" / "sites" / "jezero.yaml")
+
+BUCKET = config.get("bucket", "mars-sv-123412369922")
+SMOKE_DEST = f"s3://{BUCKET}/orbital/_smoke/global/v1/"
+
+include: str(REPO / "layers" / "l1_global" / "rules.smk")
 
 
 rule all:
     input: []
+
+
+rule smoke_build:
+    output: directory("smoke/layer")
+    shell: "python -m pipelines.smoke {output}"
+
+
+rule smoke:
+    input: "smoke/layer"
+    output: "smoke/published.txt"
+    params: dest=SMOKE_DEST
+    shell: "python -m common.publish {input} {params.dest} > {output}.tmp && mv {output}.tmp {output}"
