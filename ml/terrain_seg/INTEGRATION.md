@@ -102,6 +102,8 @@ CLI: `python ml/terrain_seg/corridor.py --l2 <folder|s3://...> --start LON LAT -
 
 ## 6. Open points for a `contract` issue
 
+Ready-to-paste issue text: [CONTRACT_ISSUE.md](CONTRACT_ISSUE.md).
+
 1. Layer name and layout of the database: `rover/l9_terrain_db/<site>/vN/` with assets
    `vector_db` (.npz) and `meta` (db.json).
 2. Class legend and cost table (current placeholders: soil 1, bedrock 1.5, sand 3, big rock 8,
