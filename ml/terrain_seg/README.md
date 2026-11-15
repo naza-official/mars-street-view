@@ -1,5 +1,7 @@
 # Terrain segmentation (B lane, experimental)
 
+**Integration with Person A (route service): see [INTEGRATION.md](INTEGRATION.md).**
+
 Goal: per-pixel terrain classes on rover images (soil, bedrock, sand, big rock) as ground truth for
 a later traversability-cost layer. Not part of the published layers yet.
 

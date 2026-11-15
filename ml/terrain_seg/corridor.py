@@ -1,23 +1,33 @@
-"""On-demand terrain classification along a route corridor, with a tile cache, plus a demo route.
+"""Route service: terrain classes + slope -> least-cost route between two lon/lat points.
 
-Tiles: a fixed global grid of 256 x 256 m (1024 x 1024 px of the 0.25 m PLACES orbital map), each
-classified once and cached under work/terrain_seg/tile_cache/<db version>/. The cache key includes
-the vector database version (hash of vector_db_patch.npz) and the embedding model, so rebuilding the
-database invalidates old tiles automatically. A tile is classified live only when it is missing.
+Orbital data come from Person A's L2 layer (ortho + DTM COGs, found through layer.json; local folder
+or s3:// URI) - or, for the demo only, from the PLACES map (`--l2 places`). The vector database
+comes from the B-lane layer rover/l9_terrain_db/<site>/vN/ (package_db.py).
 
-Per tile: the ortho (with a 28 m context margin, fetched with HTTP multi-range requests from the
-PLACES map, no full download) -> MOMO patch tokens (4 x 4 m) -> per-class k-nearest search in the
-patch vector database -> class per patch, "unknown" beyond the database distance threshold.
+Live + cache: the corridor is covered by tiles of a fixed 256 m grid in the L2 CRS. A tile is
+classified only on first use and cached under
+    <cache>/<L2 layer id>/<database id>/tile_<i>_<j>.npz
+so a new L2 version or a rebuilt database never reuses stale tiles.
 
-Route: cost per 4 m cell = class cost x (1 + (slope / 10 deg)^2); slopes > --max-slope and cells
-outside the corridor are impassable; least-cost path between the end points (8-connected).
+Per tile: ortho window (+28 m context) at 0.25 m -> MOMO patch tokens (4 x 4 m) -> per-class
+k-nearest search in the database -> class per patch ("unknown" beyond the database threshold).
+Cost per 4 m cell = class cost x (1 + (slope / 10 deg)^2); slopes > --max-slope and cells outside
+the corridor are blocked; least-cost 8-connected path.
 
-Output: $MSV_DATA/work/terrain_seg/corridor/<name>.{npz,json,geojson} and
-        <repo>/review/terrain_seg/corridor_<name>.png
+Outputs (<out>/<name>.*):
+  geojson   route LineString in lon/lat (IAU_2015:49900) + length and class shares
+  tif       COG in the L2 CRS, 4 m: band 1 class (0 soil 1 bedrock 2 sand 3 big rock
+            4 unknown, 255 outside), band 2 cost; tags carry legend, costs, layer/db ids
+  json      run summary (tiles computed vs cached, timings)
+  png       preview
 
 Usage:
-  python ml/terrain_seg/corridor.py --name landing_to_seitah \\
-      --start 4354494 1093300 --end 4354011 1092645 --width 300
+  python ml/terrain_seg/corridor.py --l2 ~/mars-data/test_orbital/l2_regional/jezero/v1 \\
+      --start 77.45088 18.44463 --end 77.44229 18.43358 --width 300 --name landing_to_seitah
+Python:
+  from corridor import plan_route
+  result = plan_route("s3://mars-sv-123412369922/orbital/l2_regional/jezero/v1",
+                      (77.45088, 18.44463), (77.44229, 18.43358), width_m=300)
 """
 
 from __future__ import annotations
@@ -25,312 +35,287 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import re
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
-import requests
 import torch
+from affine import Affine
 from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from infer_m2020 import COLOURS  # noqa: E402
-from raycast import DEM_E0, DEM_N0  # noqa: E402
-from region_knn import DATA, ROOT, momo_tokens  # noqa: E402
-from review_crops import font  # noqa: E402
-from train import CLASSES  # noqa: E402
-from vector_db import per_class_scores  # noqa: E402
+from sources import DATA, open_source  # noqa: E402
 
-MAP_URL = (
-    "https://pds-geosciences.wustl.edu/m2020/urn-nasa-pds-mars2020_rover_places/"
-    "data_maps/m20_orbital_map.img"
-)
-MAP_RES, MAP_LINES, MAP_SAMPLES, MAP_HEADER = 0.25, 21920, 59200, 118400
-TILE, CTX, P = 1024, 112, 16
-DB_FILE = DATA / "work/terrain_seg/vector_db_patch/vector_db_patch.npz"
-DB_SUMMARY = DATA / "work/terrain_seg/vector_db_patch/summary.json"
-CACHE_ROOT = DATA / "work/terrain_seg/tile_cache"
-OUT = DATA / "work/terrain_seg/corridor"
-MODEL_ID = "momo_vitb16_debiased"
+ROOT = Path(__file__).resolve().parents[2]
+TILE_M, CTX_M, ORTHO_RES, CELL = 256.0, 28.0, 0.25, 4.0
+CLASSES = ["soil", "bedrock", "sand", "big_rock", "unknown"]
 COST = {"soil": 1.0, "bedrock": 1.5, "sand": 3.0, "big_rock": 8.0, "unknown": 2.5}
-UNKNOWN = 4
+COLOURS = np.array(
+    [[215, 160, 90], [60, 120, 230], [250, 220, 40], [230, 40, 40], [90, 90, 90]], np.uint8
+)
+DEFAULT_DB = DATA / "rover/l9_terrain_db/jezero/v1"
+DEFAULT_CACHE = DATA / "work/terrain_seg/tile_cache"
+DEFAULT_OUT = DATA / "work/terrain_seg/routes"
 
 
-def db_version() -> str:
-    h = hashlib.sha1(DB_FILE.read_bytes()).hexdigest()[:10]
-    return f"{MODEL_ID}_{h}"
+class Database:
+    def __init__(self, folder: Path):
+        folder = Path(folder)
+        z = np.load(folder / "vector_db.npz")
+        self.emb = z["embedding"].astype(np.float32)
+        self.cls = z["label"].astype(int)
+        self.meta = json.loads((folder / "db.json").read_text())
+        doc = json.loads((folder / "layer.json").read_text())
+        digest = hashlib.sha1((folder / "vector_db.npz").read_bytes()).hexdigest()[:8]
+        self.id = f"{doc['layer']}_{doc['site']}_{doc['version']}_{digest}"
+
+    def classify(self, q: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
+        d = 1.0 - q @ self.emb.T
+        scores = np.full((len(q), 4), np.inf)
+        for c in range(4):
+            cols = np.nonzero(self.cls == c)[0]
+            if len(cols) >= k:
+                scores[:, c] = np.sort(d[:, cols], axis=1)[:, :k].mean(1)
+        cls = np.argmin(scores, 1)
+        cls[scores.min(1) > self.meta["unknown_threshold_cosine"]] = 4
+        return cls.astype(np.uint8), scores
 
 
-def fetch_rows(session: requests.Session, band: int, rows: range, c0: int, c1: int) -> np.ndarray:
-    """Columns c0:c1 of the given rows of one band, via multi-range HTTP requests."""
-    out = np.zeros((len(rows), c1 - c0), np.uint8)
-    base = MAP_HEADER + band * MAP_LINES * MAP_SAMPLES
-    rows = list(rows)
-    for i in range(0, len(rows), 200):
-        chunk = rows[i : i + 200]
-        spans = [(base + r * MAP_SAMPLES + c0, base + r * MAP_SAMPLES + c1 - 1) for r in chunk]
-        hdr = "bytes=" + ",".join(f"{a}-{b}" for a, b in spans)
-        for attempt in range(4):
-            try:
-                resp = session.get(MAP_URL, headers={"Range": hdr}, timeout=300)
-                if resp.status_code != 206:
-                    raise requests.RequestException(f"HTTP {resp.status_code}")
-                parts = parse_multipart(resp)
-                break
-            except requests.RequestException:
-                if attempt == 3:
-                    raise
-                time.sleep(3 * (attempt + 1))
-        for k, (a, _) in enumerate(spans):
-            out[i + k] = np.frombuffer(parts[a], np.uint8)
-    return out
-
-
-def parse_multipart(resp: requests.Response) -> dict[int, bytes]:
-    ctype = resp.headers.get("Content-Type", "")
-    body = resp.content
-    if "multipart/byteranges" not in ctype:
-        start = int(re.search(r"bytes (\d+)-", resp.headers["Content-Range"]).group(1))
-        return {start: body}
-    boundary = ctype.split("boundary=")[1].strip().strip('"').encode()
-    parts = {}
-    for seg in body.split(b"--" + boundary):
-        if b"Content-Range" not in seg:
-            continue
-        head, _, data = seg.partition(b"\r\n\r\n")
-        m = re.search(rb"bytes (\d+)-(\d+)/", head)
-        a, b = int(m.group(1)), int(m.group(2))
-        parts[a] = data[: b - a + 1]
-    return parts
-
-
-def tile_ortho(session: requests.Session, tx: int, ty: int) -> np.ndarray:
-    r0, c0 = ty * TILE - CTX, tx * TILE - CTX
-    r1, c1 = r0 + TILE + 2 * CTX, c0 + TILE + 2 * CTX
-    rr0, cc0 = max(r0, 0), max(c0, 0)
-    rr1, cc1 = min(r1, MAP_LINES), min(c1, MAP_SAMPLES)
-    rgb = np.zeros((r1 - r0, c1 - c0, 3), np.uint8)
-    for b in range(3):
-        rgb[rr0 - r0 : rr1 - r0, cc0 - c0 : cc1 - c0, b] = fetch_rows(
-            session, b, range(rr0, rr1), cc0, cc1
-        )
-    return rgb
-
-
-def classify_tile(tx: int, ty: int, ctx: dict) -> dict:
-    """Cached per-patch classes for one tile; computed live (and cached) when missing."""
-    f = ctx["cache"] / f"tile_{tx}_{ty}.npz"
+def classify_tile(
+    src, db: Database, i: int, j: int, cache: Path, device, k: int, stats: dict
+) -> dict:
+    f = cache / f"tile_{i}_{j}.npz"
     if f.exists():
+        stats["cached"] += 1
         z = np.load(f)
-        ctx["stats"]["cached"] += 1
-        return {k: z[k] for k in z.files}
-    rgb = tile_ortho(ctx["session"], tx, ty)
-    tokens, p = momo_tokens(rgb, ctx["device"])
-    g = TILE // P
-    c = CTX // P
+        return {key: z[key] for key in z.files}
+    from region_knn import momo_tokens
+
+    x0, y0 = i * TILE_M, j * TILE_M
+    rgb = src.read_rgb(x0 - CTX_M, y0 - CTX_M, x0 + TILE_M + CTX_M, y0 + TILE_M + CTX_M, ORTHO_RES)
+    tokens, p = momo_tokens(rgb, device)
+    g, c = int(TILE_M / ORTHO_RES) // p, int(CTX_M / ORTHO_RES) // p
     tok = tokens[c : c + g, c : c + g].reshape(-1, tokens.shape[2]).astype(np.float32)
+    empty = (
+        rgb[
+            int(CTX_M / ORTHO_RES) : -int(CTX_M / ORTHO_RES),
+            int(CTX_M / ORTHO_RES) : -int(CTX_M / ORTHO_RES),
+        ].max()
+        == 0
+    )
     tok -= tok.mean(0, keepdims=True)
-    tok /= np.linalg.norm(tok, axis=1, keepdims=True)
-    scores = per_class_scores(tok, ctx["db_e"], ctx["db_c"], ctx["k"])
-    cls = np.argmin(scores, 1)
-    cls[scores.min(1) > ctx["thr"]] = UNKNOWN
-    thumb = np.asarray(Image.fromarray(rgb[CTX : CTX + TILE, CTX : CTX + TILE]).resize((256, 256)))
+    tok /= np.maximum(np.linalg.norm(tok, axis=1, keepdims=True), 1e-9)
+    cls, scores = db.classify(tok, k)
+    if empty:
+        cls[:] = 255
+    ctx_px = int(CTX_M / ORTHO_RES)
+    thumb = np.asarray(Image.fromarray(rgb[ctx_px:-ctx_px, ctx_px:-ctx_px]).resize((256, 256)))
     out = {
-        "cls": cls.reshape(g, g).astype(np.uint8),
-        "score": scores.reshape(g, g, -1).astype(np.float16),
+        "cls": cls.reshape(g, g),
+        "score": scores.reshape(g, g, 4).astype(np.float16),
         "thumb": thumb,
     }
     np.savez_compressed(f, **out)
-    ctx["stats"]["computed"] += 1
+    stats["computed"] += 1
     return out
 
 
-def corridor_tiles(start: np.ndarray, end: np.ndarray, width: float) -> list[tuple[int, int]]:
-    tile_m = TILE * MAP_RES
-    length = np.linalg.norm(end - start)
-    n = max(2, int(length / (tile_m / 4)))
+def corridor_tiles(a: np.ndarray, b: np.ndarray, width: float) -> list[tuple[int, int]]:
+    n = max(2, int(np.linalg.norm(b - a) / (TILE_M / 4)))
+    off = np.arange(-width / 2, width / 2 + 1, TILE_M / 4)
     tiles = set()
     for t in np.linspace(0, 1, n):
-        e, nn = start + t * (end - start)
-        for de in np.arange(-width / 2, width / 2 + 1, tile_m / 4):
-            for dn in np.arange(-width / 2, width / 2 + 1, tile_m / 4):
-                col, row = (e + de - DEM_E0) / MAP_RES, (DEM_N0 - (nn + dn)) / MAP_RES
-                tiles.add((int(col // TILE), int(row // TILE)))
+        x, y = a + t * (b - a)
+        for dx in off:
+            for dy in off:
+                tiles.add((int(np.floor((x + dx) / TILE_M)), int(np.floor((y + dy) / TILE_M))))
     return sorted(tiles)
 
 
-def slope_deg_4m(e0: float, n0: float, h: int, w: int) -> np.ndarray:
-    dem = np.load(DATA / "work/places_dem.npy", mmap_mode="r")
-    c0, r0 = int(round(e0 - DEM_E0)), int(round(DEM_N0 - n0))
-    z = np.asarray(dem[r0 : r0 + h * 4, c0 : c0 + w * 4], np.float32)
-    z = z.reshape(h, 4, w, 4).mean((1, 3))
-    gy, gx = np.gradient(z, 4.0)
-    return np.degrees(np.arctan(np.hypot(gx, gy)))
+def plan_route(
+    l2: str,
+    start_lonlat,
+    end_lonlat,
+    width_m: float = 300.0,
+    name: str = "route",
+    db_dir: Path = DEFAULT_DB,
+    cache_root: Path = DEFAULT_CACHE,
+    out_dir: Path = DEFAULT_OUT,
+    k: int | None = None,
+    max_slope: float = 25.0,
+) -> dict:
+    t0 = time.time()
+    src = open_source(l2)
+    db = Database(db_dir)
+    k = k or int(db.meta["k"])
+    cache = Path(cache_root) / src.version / db.id
+    cache.mkdir(parents=True, exist_ok=True)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    a = np.array(src.to_xy(*start_lonlat), float)
+    b = np.array(src.to_xy(*end_lonlat), float)
+    tiles = corridor_tiles(a, b, width_m)
+    i0, j0 = min(t[0] for t in tiles), min(t[1] for t in tiles)
+    i1, j1 = max(t[0] for t in tiles), max(t[1] for t in tiles)
+    g = int(TILE_M / CELL)
+    W, H = (i1 - i0 + 1) * g, (j1 - j0 + 1) * g
+    cls = np.full((H, W), 255, np.uint8)
+    thumb = np.zeros(((j1 - j0 + 1) * 256, (i1 - i0 + 1) * 256, 3), np.uint8)
+    stats = {"computed": 0, "cached": 0}
+    for i, j in tiles:
+        t = classify_tile(src, db, i, j, cache, device, k, stats)
+        r = (j1 - j) * g
+        c = (i - i0) * g
+        cls[r : r + g, c : c + g] = t["cls"]
+        thumb[(j1 - j) * 256 : (j1 - j + 1) * 256, (i - i0) * 256 : (i - i0 + 1) * 256] = t["thumb"]
+    t_class = time.time() - t0
 
+    x0, y1 = i0 * TILE_M, (j1 + 1) * TILE_M
+    dem = src.read_dem(x0, y1 - H * CELL, x0 + W * CELL, y1, CELL)[:H, :W]
+    gy, gx = np.gradient(np.nan_to_num(dem, nan=np.nanmean(dem)), CELL)
+    slope = np.degrees(np.arctan(np.hypot(gx, gy)))
+    cost_tab = np.array([COST[c] for c in CLASSES] + [np.inf] * 251)
+    cost = cost_tab[cls] * (1 + (slope / 10.0) ** 2)
+    ys, xs = np.mgrid[0:H, 0:W]
+    cx, cy = x0 + (xs + 0.5) * CELL, y1 - (ys + 0.5) * CELL
+    d = b - a
+    tp = np.clip(((cx - a[0]) * d[0] + (cy - a[1]) * d[1]) / (d @ d), 0, 1)
+    dist = np.hypot(cx - (a[0] + tp * d[0]), cy - (a[1] + tp * d[1]))
+    blocked = (slope > max_slope) | (dist > width_m / 2) | ~np.isfinite(cost) | np.isnan(dem)
+    cost[blocked] = 1e6
 
-def route(cost: np.ndarray, a: tuple[int, int], b: tuple[int, int]) -> tuple[np.ndarray, float]:
+    def rc(pt):
+        return int((y1 - pt[1]) / CELL), int((pt[0] - x0) / CELL)
+
     from skimage.graph import route_through_array
 
-    path, total = route_through_array(cost, a, b, fully_connected=True, geometric=True)
-    return np.array(path), float(total)
+    path, _ = route_through_array(cost, rc(a), rc(b), fully_connected=True, geometric=True)
+    path = np.array(path)
+    seg = np.hypot(np.diff(path[:, 0]), np.diff(path[:, 1])) * CELL
+    on = cls[path[1:, 0], path[1:, 1]]
+    length = float(seg.sum())
+    share = {
+        c: round(float(seg[on == n].sum() / max(length, 1e-9)), 4) for n, c in enumerate(CLASSES)
+    }
+    px, py = x0 + (path[:, 1] + 0.5) * CELL, y1 - (path[:, 0] + 0.5) * CELL
+    lon, lat = src.to_lonlat(px, py)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    props = {
+        "name": name,
+        "length_m": round(length, 1),
+        "straight_m": round(float(np.linalg.norm(d)), 1),
+        "class_share": share,
+        "l2": src.version,
+        "database": db.id,
+        "class_cost": COST,
+        "max_slope_deg": max_slope,
+    }
+    gj = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": props,
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": np.stack([lon, lat], 1).round(7).tolist(),
+                },
+            }
+        ],
+    }
+    (out_dir / f"{name}.geojson").write_text(json.dumps(gj))
+    result = {
+        **props,
+        "tiles": len(tiles),
+        **stats,
+        "classification_seconds": round(t_class, 1),
+        "total_seconds": round(time.time() - t0, 1),
+        "geojson": str(out_dir / f"{name}.geojson"),
+    }
+    if src.crs is not None:
+        from common.cog import write_cog
+        from common.validate import validate
+
+        bands = np.stack([cls.astype(np.float32), np.where(blocked, -1, cost).astype(np.float32)])
+        bands[0][cls == 255] = -1
+        tif = out_dir / f"{name}.tif"
+        write_cog(
+            tif,
+            bands,
+            Affine(CELL, 0, x0, 0, -CELL, y1),
+            src.crs,
+            -1.0,
+            {
+                "MSV_KIND": "terrain_class",
+                "BANDS": "class,cost",
+                "CLASS_LEGEND": ",".join(f"{n}={c}" for n, c in enumerate(CLASSES)),
+                "CLASS_COST": json.dumps(COST),
+                "L2": src.version,
+                "DATABASE": db.id,
+            },
+        )
+        result["cog"] = str(tif)
+        result["cog_valid"] = validate(str(tif)).ok
+    (out_dir / f"{name}.json").write_text(json.dumps(result, indent=2))
+    preview(thumb, cls, path, rc(a), rc(b), result, out_dir / f"{name}.png")
+    return result
+
+
+def preview(thumb, cls, path, a_rc, b_rc, res: dict, out_png: Path) -> None:
+    lab = np.where(cls < 5, cls, 4)
+    big = np.kron(COLOURS[lab], np.ones((4, 4, 1), np.uint8))[: thumb.shape[0], : thumb.shape[1]]
+    over = (0.45 * thumb + 0.55 * big).astype(np.uint8)
+    canvas = Image.new("RGB", (thumb.shape[1] * 2 + 30, thumb.shape[0] + 60), (24, 24, 24))
+    canvas.paste(Image.fromarray(thumb), (10, 50))
+    canvas.paste(Image.fromarray(over), (thumb.shape[1] + 20, 50))
+    dr = ImageDraw.Draw(canvas)
+    for x0 in (10, thumb.shape[1] + 20):
+        dr.line(
+            [(x0 + (c + 0.5) * 4, 50 + (r + 0.5) * 4) for r, c in path],
+            fill=(255, 255, 255),
+            width=3,
+        )
+        dr.line(
+            [(x0 + a_rc[1] * 4, 50 + a_rc[0] * 4), (x0 + b_rc[1] * 4, 50 + b_rc[0] * 4)],
+            fill=(255, 0, 255),
+            width=1,
+        )
+    dr.text(
+        (10, 14),
+        f"{res['name']}: {res['length_m']:.0f} m (straight {res['straight_m']:.0f})"
+        f" | L2 {res['l2']} | tiles {res['computed']} live / {res['cached']} cached",
+        fill=(255, 255, 255),
+    )
+    canvas.save(out_png)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--name", default="landing_to_seitah")
-    ap.add_argument(
-        "--start",
-        nargs=2,
-        type=float,
-        default=[4354494.0, 1093300.0],
-        metavar=("E", "N"),
-        help="PLACES easting/northing, m",
-    )
-    ap.add_argument(
-        "--end", nargs=2, type=float, default=[4354011.0, 1092645.0], metavar=("E", "N")
-    )
-    ap.add_argument("--width", type=float, default=300.0, help="corridor width, m")
-    ap.add_argument("--k", type=int, default=3)
+    ap.add_argument("--l2", required=True, help="L2 layer folder or s3:// URI, or 'places'")
+    ap.add_argument("--start", nargs=2, type=float, required=True, metavar=("LON", "LAT"))
+    ap.add_argument("--end", nargs=2, type=float, required=True, metavar=("LON", "LAT"))
+    ap.add_argument("--width", type=float, default=300.0)
+    ap.add_argument("--name", default="route")
+    ap.add_argument("--db", type=Path, default=DEFAULT_DB)
+    ap.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
+    ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--max-slope", type=float, default=25.0)
     a = ap.parse_args()
-    t0 = time.time()
-    db = np.load(DB_FILE)
-    ver = db_version()
-    cache = CACHE_ROOT / ver
-    cache.mkdir(parents=True, exist_ok=True)
-    session = requests.Session()
-    session.headers["User-Agent"] = "mars-street-view/0.1 (research)"
-    ctx = {
-        "cache": cache,
-        "session": session,
-        "k": a.k,
-        "device": torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-        "db_e": db["embedding"].astype(np.float32),
-        "db_c": db["label"],
-        "thr": json.loads(DB_SUMMARY.read_text())["unknown_threshold_cosine"],
-        "stats": {"computed": 0, "cached": 0},
-    }
-    start, end = np.array(a.start), np.array(a.end)
-    tiles = corridor_tiles(start, end, a.width)
-    txs, tys = [t[0] for t in tiles], [t[1] for t in tiles]
-    tx0, ty0 = min(txs), min(tys)
-    g = TILE // P
-    W, H = (max(txs) - tx0 + 1) * g, (max(tys) - ty0 + 1) * g
-    cls = np.full((H, W), 255, np.uint8)
-    thumb = np.zeros(((max(tys) - ty0 + 1) * 256, (max(txs) - tx0 + 1) * 256, 3), np.uint8)
-    for tx, ty in tiles:
-        t = classify_tile(tx, ty, ctx)
-        cls[(ty - ty0) * g : (ty - ty0 + 1) * g, (tx - tx0) * g : (tx - tx0 + 1) * g] = t["cls"]
-        thumb[(ty - ty0) * 256 : (ty - ty0 + 1) * 256, (tx - tx0) * 256 : (tx - tx0 + 1) * 256] = t[
-            "thumb"
-        ]
-        print(f"  tile ({tx},{ty}) {ctx['stats']}", flush=True)
-    t_class = time.time() - t0
-
-    e0 = DEM_E0 + tx0 * TILE * MAP_RES
-    n0 = DEM_N0 - ty0 * TILE * MAP_RES
-    cell = P * MAP_RES
-    slope = slope_deg_4m(e0, n0, H, W)
-    names = [*CLASSES, "unknown"]
-    cost_tab = np.array([COST[n] for n in names] + [np.inf] * 251)
-    cost = cost_tab[cls] * (1 + (slope / 10.0) ** 2)
-    ys, xs = np.mgrid[0:H, 0:W]
-    ce, cn = e0 + (xs + 0.5) * cell, n0 - (ys + 0.5) * cell
-    d = end - start
-    tproj = np.clip(((ce - start[0]) * d[0] + (cn - start[1]) * d[1]) / (d @ d), 0, 1)
-    dist = np.hypot(ce - (start[0] + tproj * d[0]), cn - (start[1] + tproj * d[1]))
-    blocked = (slope > a.max_slope) | (dist > a.width / 2) | ~np.isfinite(cost)
-    cost[blocked] = 1e6
-
-    def rc(pt: np.ndarray) -> tuple[int, int]:
-        return int((n0 - pt[1]) / cell), int((pt[0] - e0) / cell)
-
-    path, total = route(cost, rc(start), rc(end))
-    on = cls[path[:, 0], path[:, 1]]
-    seg = np.hypot(np.diff(path[:, 0]), np.diff(path[:, 1])) * cell
-    length = float(seg.sum())
-    comp = {n: float(seg[on[1:] == i].sum() / max(length, 1e-9)) for i, n in enumerate(names)}
-    straight = float(np.linalg.norm(d))
-    OUT.mkdir(parents=True, exist_ok=True)
-
-    from export_evidence import fit_places_to_lonlat
-
-    alon, alat = fit_places_to_lonlat()
-    pe, pn = e0 + (path[:, 1] + 0.5) * cell, n0 - (path[:, 0] + 0.5) * cell
-    coords = np.stack([np.polyval(alon, pe), np.polyval(alat, pn)], 1).round(7).tolist()
-    (OUT / f"{a.name}.geojson").write_text(
-        json.dumps(
-            {
-                "type": "FeatureCollection",
-                "features": [
-                    {
-                        "type": "Feature",
-                        "geometry": {"type": "LineString", "coordinates": coords},
-                        "properties": {
-                            "name": a.name,
-                            "length_m": round(length, 1),
-                            "crs": "IAU_2015:49900 lon/lat",
-                        },
-                    }
-                ],
-            }
-        )
+    res = plan_route(
+        a.l2,
+        tuple(a.start),
+        tuple(a.end),
+        a.width,
+        a.name,
+        a.db,
+        a.cache,
+        a.out,
+        max_slope=a.max_slope,
     )
-    np.savez_compressed(
-        OUT / f"{a.name}.npz",
-        cls=cls,
-        cost=cost,
-        slope=slope,
-        path=path,
-        origin_e=e0,
-        origin_n=n0,
-        cell=cell,
-    )
-    summary = {
-        "name": a.name,
-        "db_version": ver,
-        "tiles": len(tiles),
-        **ctx["stats"],
-        "classification_seconds": round(t_class, 1),
-        "straight_m": round(straight, 1),
-        "route_m": round(length, 1),
-        "route_class_share": comp,
-        "class_cost": COST,
-        "max_slope_deg": a.max_slope,
-    }
-    (OUT / f"{a.name}.json").write_text(json.dumps(summary, indent=2))
-
-    pal = np.vstack([COLOURS, [[90, 90, 90]]]).astype(np.uint8)
-    lab = np.where(cls < 5, cls, 4)
-    big = np.kron(pal[lab], np.ones((4, 4, 1), np.uint8))[: thumb.shape[0], : thumb.shape[1]]
-    over = (0.45 * thumb + 0.55 * big).astype(np.uint8)
-    canvas = Image.new("RGB", (thumb.shape[1] * 2 + 30, thumb.shape[0] + 70), (24, 24, 24))
-    canvas.paste(Image.fromarray(thumb), (10, 50))
-    canvas.paste(Image.fromarray(over), (thumb.shape[1] + 20, 50))
-    dr = ImageDraw.Draw(canvas)
-    for x0 in (10, thumb.shape[1] + 20):
-        pts = [(x0 + (c + 0.5) * 4, 50 + (r + 0.5) * 4) for r, c in path]
-        dr.line(pts, fill=(255, 255, 255), width=3)
-        (r_a, c_a), (r_b, c_b) = rc(start), rc(end)
-        dr.line(
-            [(x0 + c_a * 4, 50 + r_a * 4), (x0 + c_b * 4, 50 + r_b * 4)],
-            fill=(255, 0, 255),
-            width=1,
-        )
-    dr.text(
-        (10, 12),
-        f"{a.name}: route {length:.0f} m (straight {straight:.0f} m), "
-        f"{len(tiles)} tiles: {ctx['stats']['computed']} computed, "
-        f"{ctx['stats']['cached']} from cache, {t_class:.0f} s",
-        font=font(20),
-        fill=(255, 255, 255),
-    )
-    canvas.save(ROOT / f"review/terrain_seg/corridor_{a.name}.png")
-    print(json.dumps(summary, indent=1))
+    print(json.dumps(res, indent=1))
 
 
 if __name__ == "__main__":
