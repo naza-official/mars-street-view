@@ -13,7 +13,8 @@ TAGGED_RESOURCES = ("instance", "volume", "network-interface", "spot-instances-r
 
 config = pulumi.Config()
 job = resolve({key: config.get(key) for key in
-               ("target", "site", "run_id", "image_tag", "instance_types", "volume_gb")})
+               ("target", "site", "run_id", "image_tag", "instance_types", "volume_gb",
+                "market")})
 tags = {"project": "mars-sv", "milestone": config.get("milestone") or "M3",
         "run_id": job.run_id, "target": job.target, "site": job.site}
 provider = aws.Provider(
@@ -60,12 +61,15 @@ def launch_template(job: Job, sg: aws.ec2.SecurityGroup,
     )
 
 
-def spot_instance(job: Job, template: aws.ec2.LaunchTemplate) -> aws.ec2.Instance:
+SPOT_OPTIONS = {"market_type": "spot", "spot_options": {
+    "spot_instance_type": "one-time", "instance_interruption_behavior": "terminate"}}
+
+
+def build_instance(job: Job, template: aws.ec2.LaunchTemplate) -> aws.ec2.Instance:
     return aws.ec2.Instance(
         "vm", instance_type=job.instance_types[0],
         launch_template={"id": template.id, "version": template.latest_version.apply(str)},
-        instance_market_options={"market_type": "spot", "spot_options": {
-            "spot_instance_type": "one-time", "instance_interruption_behavior": "terminate"}},
+        instance_market_options=SPOT_OPTIONS if job.market == "spot" else None,
         tags={**tags, "Name": f"msv-{job.run_id}"},
         opts=opts,
     )
@@ -78,13 +82,14 @@ subnets = aws.ec2.get_subnets_output(
     opts=invoke,
 )
 subnet_id = subnets.ids.apply(lambda ids: sorted(ids)[0])
-vm = spot_instance(job, launch_template(job, security_group(vpc.id), subnet_id))
+vm = build_instance(job, launch_template(job, security_group(vpc.id), subnet_id))
 
 pulumi.export("run_id", job.run_id)
 pulumi.export("target", job.target)
 pulumi.export("site", job.site)
 pulumi.export("image", job.image)
 pulumi.export("instance_type", job.instance_types[0])
+pulumi.export("market", job.market)
 pulumi.export("done_uri", storage.require_output("bucket").apply(
     lambda b: f"s3://{b}/work/{job.run_id}/DONE"))
 pulumi.export("instance_id", vm.id)

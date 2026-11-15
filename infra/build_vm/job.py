@@ -13,6 +13,7 @@ DEFAULT_INSTANCE_TYPES = ("m7i.4xlarge", "m6i.4xlarge", "r6i.2xlarge")
 DEFAULT_VOLUME_GB = 500
 DEFAULT_IMAGE_TAG = "v0.3.1"
 HARD_STOP_MIN = 72 * 60
+MARKETS = ("spot", "on-demand")
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,7 @@ class Job:
     image_tag: str
     instance_types: tuple[str, ...]
     volume_gb: int
+    market: str = "spot"
 
     @property
     def image(self) -> str:
@@ -55,6 +57,7 @@ def resolve(config: dict[str, str | None], env: dict[str, str] | None = None) ->
                                     ",".join(DEFAULT_INSTANCE_TYPES))),
         volume_gb=int(_pick(env, "MSV_VOLUME_GB", config.get("volume_gb"),
                             str(DEFAULT_VOLUME_GB))),
+        market=_pick(env, "MSV_MARKET", config.get("market"), "spot"),
     )
     check(job)
     return job
@@ -70,6 +73,8 @@ def check(job: Job) -> None:
         problems.append(f"run_id {job.run_id!r}")
     if not re.match(r"^[A-Za-z0-9_.-]+$", job.image_tag):
         problems.append(f"image_tag {job.image_tag!r}")
+    if job.market not in MARKETS:
+        problems.append(f"market {job.market!r}")
     if not job.instance_types:
         problems.append("instance_types empty")
     if not 20 <= job.volume_gb <= 2000:
